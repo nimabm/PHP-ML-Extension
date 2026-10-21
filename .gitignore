@@ -1,0 +1,47 @@
+# phpize / autotools output (if the extension is ever built in-tree)
+*.o
+*.lo
+*.la
+.libs/
+modules/
+autom4te.cache/
+build/
+include/
+Makefile
+Makefile.fragments
+Makefile.global
+Makefile.objects
+acinclude.m4
+aclocal.m4
+config.guess
+config.h
+config.h.in
+config.log
+config.nice
+config.status
+config.sub
+configure
+configure.ac
+configure~
+install-sh
+libtool
+ltmain.sh
+missing
+mkinstalldirs
+run-tests.php
+tmp-php.ini
+
+# phpt artifacts
+tests/*.diff
+tests/*.exp
+tests/*.log
+tests/*.out
+tests/*.php
+tests/*.sh
+
+# macOS
+.DS_Store
+
+# docker build --target artifact output
+out/
+dist/
