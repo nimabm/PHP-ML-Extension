@@ -40,4 +40,19 @@ docker build --target test .
 ```
 
 To test another PHP version, add `--build-arg PHP_VERSION=8.x`. Every supported version must
-pass before a change is merged.
+pass before a change is merged. GitHub Actions checks this on every pull request.
+
+## Releases
+
+Releases are published automatically by
+[.github/workflows/ci.yml](.github/workflows/ci.yml). Don't create tags or releases by hand.
+
+1. Bump `PHP_MLNATIVE_VERSION` in `php_mlnative.h`, following [semver](https://semver.org).
+2. Add a `### <version>` entry at the top of the changelog (section 13 of
+   `docs/DOCUMENTATION.md`). CI fails if the entry is missing.
+3. Merge into `main`. CI tests all PHP versions and architectures, then publishes the release
+   `v<version>` with prebuilt binaries.
+
+A merge without a version bump is tested, but nothing is released. See
+[docs/DOCUMENTATION.md section 9.1](docs/DOCUMENTATION.md#91-continuous-integration-and-releases)
+for details.

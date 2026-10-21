@@ -22,6 +22,7 @@ interpreter loops entirely.
    - [3.3 Building from source with phpize](#33-building-from-source-with-phpize)
    - [3.4 Enabling and verifying](#34-enabling-and-verifying)
    - [3.5 Build options](#35-build-options)
+   - [3.6 Prebuilt binaries from GitHub Releases](#36-prebuilt-binaries-from-github-releases)
 4. [Core concepts](#4-core-concepts)
 5. [API reference](#5-api-reference)
    - [LinearRegression](#51-mlregressionlinearregression)
@@ -36,6 +37,7 @@ interpreter loops entirely.
 7. [Recipes](#7-recipes)
 8. [Benchmarks](#8-benchmarks)
 9. [Testing](#9-testing)
+   - [9.1 Continuous integration and releases](#91-continuous-integration-and-releases)
 10. [Architecture and extending the extension](#10-architecture-and-extending-the-extension)
 11. [Troubleshooting](#11-troubleshooting)
 12. [Limitations and roadmap](#12-limitations-and-roadmap)
@@ -76,7 +78,7 @@ echo $model->predict([6, 6]), "\n";      // 31
 
 | Requirement | Version |
 |---|---|
-| PHP | 8.1, 8.2, 8.3, 8.4 (NTS builds, all tested with the Docker test stage) |
+| PHP | 8.1, 8.2, 8.3, 8.4 (NTS builds, every version tested on x86_64 and aarch64 by [GitHub Actions](#91-continuous-integration-and-releases)) |
 | Compiler | Any C++17 compiler (GCC ≥ 7, Clang ≥ 5) |
 | Build tools | `phpize` / `php-config` (php-dev package), `autoconf`, `make` |
 | OS | Linux (tested: Debian bookworm, x86_64 and aarch64). macOS should work with Homebrew PHP but is untested. Windows is not supported yet. |
@@ -102,12 +104,13 @@ docker build --build-arg PHP_VERSION=8.4 --target test .
 
 ### 3.1 Docker (recommended)
 
-The repository's [Dockerfile](../Dockerfile) has three stages:
+The repository's [Dockerfile](../Dockerfile) has four stages:
 
 | Stage | What it does |
 |---|---|
 | `build` | Installs the compiler toolchain, runs `phpize`, `configure`, `make` |
 | `test` | Runs the phpt test suite (fails the build on any failing test) |
+| `artifact` | Holds only `mlnative.so`. Use it to export the compiled module: `docker build --target artifact --output type=local,dest=out .` writes `out/mlnative.so`. |
 | `runtime` (default) | Clean `php:<version>-cli` image with only `mlnative.so` installed and enabled |
 
 ```bash
@@ -205,6 +208,56 @@ Run `php --ini` to see which files the CLI loads, and restart FPM after enabling
 | `CXXFLAGS="-O0 -g" ./configure ...` | Debug build for gdb/valgrind |
 
 The default flags are `-g -O2 -std=c++17`.
+
+### 3.6 Prebuilt binaries from GitHub Releases
+
+Every [release](https://github.com/nimabm/PHP-ML-Extension/releases) includes a compiled
+`mlnative.so` for each supported PHP version and architecture, so you don't need a compiler.
+
+| | |
+|---|---|
+| Archive name | `mlnative-<version>-php<8.x>-nts-linux-<x86_64\|aarch64>.tar.gz` |
+| Contents | `mlnative.so`, `LICENSE`, `README.md`, `stubs/` |
+| Built on | The official `php:<8.x>-cli-bookworm` Docker images (Debian 12, GCC 12) |
+| Works with | NTS (non-thread-safe), non-debug PHP of the **same minor version** on Linux with glibc 2.36+, e.g. Debian 12, Ubuntu 24.04 or any official `php:*-bookworm` image |
+| Doesn't work with | Alpine/musl, ZTS builds, debug builds, macOS, Windows. Build from source for those (3.2 / 3.3). |
+| Checksums | `SHA256SUMS` in each release |
+
+Check your PHP version, build type and architecture:
+
+```bash
+php -v
+php -i | grep -E "^Thread Safety|^Debug Build"
+uname -m
+```
+
+Then download the matching archive, verify it and install it (example: 0.1.0, PHP 8.3, x86_64):
+
+```bash
+VERSION=0.1.0 PHP=8.3 ARCH=x86_64
+NAME="mlnative-$VERSION-php$PHP-nts-linux-$ARCH"
+curl -fLO "https://github.com/nimabm/PHP-ML-Extension/releases/download/v$VERSION/$NAME.tar.gz"
+curl -fLO "https://github.com/nimabm/PHP-ML-Extension/releases/download/v$VERSION/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "$NAME.tar.gz"
+sudo cp "$NAME/mlnative.so" "$(php-config --extension-dir)/"
+# then add `extension=mlnative` to your php.ini (see 3.4) and check:
+php --ri mlnative
+```
+
+In a Dockerfile:
+
+```dockerfile
+FROM php:8.3-fpm-bookworm
+ARG MLNATIVE_VERSION=0.1.0
+RUN arch="$(uname -m)" \
+    && name="mlnative-${MLNATIVE_VERSION}-php8.3-nts-linux-${arch}" \
+    && curl -fsSL "https://github.com/nimabm/PHP-ML-Extension/releases/download/v${MLNATIVE_VERSION}/${name}.tar.gz" \
+       | tar -xz -C /tmp \
+    && mv "/tmp/${name}/mlnative.so" "$(php-config --extension-dir)/" \
+    && rm -rf "/tmp/${name}" \
+    && docker-php-ext-enable mlnative
+```
 
 ---
 
@@ -955,10 +1008,53 @@ make test TESTS="--show-diff tests"
 
 ```bash
 docker build --target build -t mlnative:build .
-docker run --rm -v "$PWD/tests:/t:ro" -v "$PWD/docs:/usr/src/mlnative/docs:ro" mlnative:build sh -c \
+docker run --rm -v "$PWD/tests:/t:ro" -v "$PWD/docs:/usr/src/mlnative/docs:ro" \
+  -v "$PWD/README.md:/usr/src/mlnative/README.md:ro" mlnative:build sh -c \
   'apt-get update -qq && apt-get install -y -qq valgrind >/dev/null && cp -r /t tests && \
    NO_INTERACTION=1 php run-tests.php -m -d extension=$PWD/modules/mlnative.so tests'
 ```
+
+### 9.1 Continuous integration and releases
+
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs on every pull request, on every
+push to `main` (that includes merges) and on demand from the Actions tab
+(`workflow_dispatch`).
+
+| Job | What it does |
+|---|---|
+| **Read version** | Reads `PHP_MLNATIVE_VERSION` from `php_mlnative.h`. It **fails** if the [changelog](#13-changelog) has no `### <version>` entry. On `main`, it also decides whether to release: only when the tag `v<version>` doesn't exist yet. |
+| **Build** (8 jobs) | PHP 8.1, 8.2, 8.3 and 8.4 × x86_64 (`ubuntu-24.04`) and aarch64 (`ubuntu-24.04-arm`). Each job runs the full test suite (`--target test`), exports `mlnative.so` (`--target artifact`), packages it as `mlnative-<version>-php<8.x>-nts-linux-<arch>.tar.gz`, and uploads it as a workflow artifact. Pull requests get these artifacts too, for manual testing. |
+| **Publish release** | Only on `main`, and only when the version is new. It creates the tag `v<version>` on the merged commit and publishes a GitHub release. The release has the 8 archives, a `SHA256SUMS` file, and the changelog entry plus install instructions as release notes. |
+
+**A merge into `main` does not always create a release.** A release happens only when
+`PHP_MLNATIVE_VERSION` has changed to a version that hasn't been released yet. Merges without
+a version bump are still tested and built, but they don't publish anything. This prevents
+duplicate or accidental releases.
+
+**How to publish a release**
+
+1. Bump `PHP_MLNATIVE_VERSION` in `php_mlnative.h` (e.g. `0.1.0` → `0.2.0`), following
+   [semantic versioning](https://semver.org):
+   - patch for fixes
+   - minor for new features
+   - major for breaking API changes
+2. Add a `### 0.2.0` entry at the top of the [changelog](#13-changelog) describing the changes.
+   The text of this entry becomes the release notes.
+3. Open a pull request. CI checks that the changelog entry exists and that all 8 builds pass.
+4. Merge into `main`. The release `v0.2.0` is published automatically when CI finishes.
+
+To check the release notes locally before merging:
+
+```bash
+docker run --rm -v "$PWD:/repo:ro" -w /repo debian:bookworm-slim sh scripts/release-notes.sh 0.2.0
+```
+
+**Repository settings needed:** GitHub must be allowed to run Actions on the repository. The
+release job uses the built-in `GITHUB_TOKEN` with `contents: write`, so it needs no secret.
+If your organization restricts it, enable *Settings → Actions → General → Workflow
+permissions → Read and write permissions*. The aarch64 jobs use GitHub's hosted
+`ubuntu-24.04-arm` runners. These are free for public repositories; private repositories
+need a plan that includes arm64 runners.
 
 ---
 
@@ -968,7 +1064,10 @@ docker run --rm -v "$PWD/tests:/t:ro" -v "$PWD/docs:/usr/src/mlnative/docs:ro" m
 
 ```
 config.m4                 Build definition (phpize/autoconf)
-php_mlnative.h            Module header, version constant
+php_mlnative.h            Module header, version constant (single source of the release version)
+Dockerfile                build / test / artifact / runtime stages
+.github/workflows/ci.yml  CI matrix and automatic releases (see 9.1)
+scripts/release-notes.sh  Extracts a version's changelog entry (used by CI)
 src/
   mlnative.cpp            Module entry; MINIT registers all classes
   php_bridge.hpp/.cpp     Zend glue (see below)
@@ -1025,6 +1124,8 @@ docs/DOCUMENTATION.md     This document
    - the [Changelog](#13-changelog)
    Also update the summary in `README.md`.
 8. **Verify:** run `docker build --target test .`, and run valgrind for non-trivial changes.
+9. **Release (optional):** bump `PHP_MLNATIVE_VERSION` and add the changelog entry. CI
+   publishes the release when the change is merged (see [9.1](#91-continuous-integration-and-releases)).
 
 ---
 
@@ -1040,6 +1141,9 @@ docs/DOCUMENTATION.md     This document
 | `Sample #0, feature #1 must be int or float, string given` | Data from CSV, a form or a database arrives as strings. Cast it with `(float)`. |
 | `Label #0 must be int or string, float given` | Labels must be discrete. Cast them with `(int)` or use strings. |
 | KMeans gives different results on each run | Pass a `seed`. |
+| Prebuilt `mlnative.so` fails with `GLIBC_2.36 not found` or `GLIBCXX_… not found` | Your system is older than Debian 12 / Ubuntu 24.04. Build from source (3.2 / 3.3). |
+| A merge into `main` didn't create a release | Releases happen only when `PHP_MLNATIVE_VERSION` changes to a version without an existing `v<version>` tag (see 9.1). |
+| CI fails with `No changelog entry "### x.y.z"` | Add that version's entry to the [changelog](#13-changelog). |
 | Memory grows beyond `memory_limit` | Native buffers are not counted by `memory_limit` (see [Limitations](#12-limitations-and-roadmap)). Train on smaller batches or in a separate CLI process. |
 
 ---
@@ -1072,3 +1176,5 @@ one-hot encoding, a cross-validation helper, multithreaded prediction, and spars
   serialization.
 - Docker build/test pipeline, phpt test suite, benchmark, executable documentation
   (this document and the README examples are run as tests).
+- GitHub Actions: tests PHP 8.1–8.4 on x86_64 and aarch64, and publishes a release with
+  prebuilt `mlnative.so` archives whenever a new version is merged into `main`.

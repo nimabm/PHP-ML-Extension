@@ -1,5 +1,7 @@
 # PHP-ML-Native
 
+[![CI](https://github.com/nimabm/PHP-ML-Extension/actions/workflows/ci.yml/badge.svg)](https://github.com/nimabm/PHP-ML-Extension/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nimabm/PHP-ML-Extension)](https://github.com/nimabm/PHP-ML-Extension/releases)
 ![PHP](https://img.shields.io/badge/PHP-8.1%20%7C%208.2%20%7C%208.3%20%7C%208.4-777BB4?logo=php&logoColor=white)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
@@ -66,14 +68,20 @@ docker build -t mlnative .                       # compile and build the runtime
 docker run --rm mlnative php examples/quickstart.php
 ```
 
-To build from source with `phpize` instead:
+**Prebuilt binaries** are attached to every
+[release](https://github.com/nimabm/PHP-ML-Extension/releases). Each release has a
+`mlnative.so` for PHP 8.1–8.4 on Linux x86_64 and aarch64 (NTS, glibc 2.36+). Download the
+archive matching your PHP version and architecture, copy `mlnative.so` into
+`php-config --extension-dir`, and add `extension=mlnative` to your php.ini.
+[Step-by-step instructions are in the documentation.](docs/DOCUMENTATION.md#36-prebuilt-binaries-from-github-releases)
+
+To build from source with `phpize` instead (requires a C++17 compiler):
 
 ```bash
 phpize && ./configure --enable-mlnative && make && make test && sudo make install
-echo "extension=mlnative" | sudo tee "$(php-config --ini-dir)/mlnative.ini"
 ```
 
-Requires PHP 8.1–8.4 and a C++17 compiler. The documentation covers
+Then add `extension=mlnative` to your php.ini. The documentation covers
 [installation in detail](docs/DOCUMENTATION.md#3-installation), including how to add the
 extension to your own Docker image.
 
@@ -231,6 +239,16 @@ docker build --target test .
 
 To test another PHP version, add `--build-arg PHP_VERSION=8.4`. Every change to the API or
 its behaviour must update the documentation; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+GitHub Actions tests every pull request on PHP 8.1–8.4 (x86_64 + aarch64). To publish a new
+release:
+
+1. Bump `PHP_MLNATIVE_VERSION` in `php_mlnative.h`.
+2. Add a changelog entry for that version.
+3. Merge into `main`.
+
+The [release process](docs/DOCUMENTATION.md#91-continuous-integration-and-releases) is
+described in the documentation.
 
 ## License
 

@@ -3,6 +3,7 @@
 #
 #   docker build --target test -t mlnative:test .   # build + run phpt tests
 #   docker build -t mlnative .                        # runtime image
+#   docker build --target artifact --output type=local,dest=dist .   # just mlnative.so
 #   docker run --rm mlnative php examples/quickstart.php
 
 ARG PHP_VERSION=8.3
@@ -24,6 +25,10 @@ COPY docs ./docs
 COPY README.md ./
 ENV NO_INTERACTION=1 REPORT_EXIT_STATUS=1
 RUN make test TESTS="--show-diff tests"
+
+# Only the compiled module, for `docker build --target artifact --output type=local,dest=dist .`
+FROM scratch AS artifact
+COPY --from=build /usr/src/mlnative/modules/mlnative.so /
 
 FROM php:${PHP_VERSION}-cli-bookworm AS runtime
 COPY --from=build /usr/src/mlnative/modules/mlnative.so /tmp/mlnative.so

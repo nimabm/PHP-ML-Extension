@@ -1,0 +1,129 @@
+# Tests every PHP version on both architectures. When main has a version that
+# hasn't been released yet (PHP_MLNATIVE_VERSION in php_mlnative.h), it also
+# publishes a GitHub release with prebuilt mlnative.so files.
+#
+# To release: bump PHP_MLNATIVE_VERSION, add a "### <version>" entry to the
+# changelog in docs/DOCUMENTATION.md, and merge into main.
+
+name: CI and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version:
+    name: Read version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        name: Read version and decide whether to release
+        run: |
+          version="$(sed -n 's/^#define PHP_MLNATIVE_VERSION "\(.*\)"$/\1/p' php_mlnative.h)"
+          if [ -z "$version" ]; then
+            echo "::error file=php_mlnative.h::PHP_MLNATIVE_VERSION not found"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # Every version must have a changelog entry, checked on pull requests too.
+          sh scripts/release-notes.sh "$version" > /dev/null
+
+          release=false
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+              echo "::notice::v$version is already released; bump PHP_MLNATIVE_VERSION to publish a new release"
+            else
+              release=true
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "Version $version, release: $release"
+
+  build:
+    name: PHP ${{ matrix.php }} / ${{ matrix.arch }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      PACKAGE: mlnative-${{ needs.version.outputs.version }}-php${{ matrix.php }}-nts-linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run tests
+        run: docker build --progress=plain --build-arg PHP_VERSION=${{ matrix.php }} --target test .
+
+      - name: Extract mlnative.so
+        run: docker build --build-arg PHP_VERSION=${{ matrix.php }} --target artifact --output type=local,dest=out .
+
+      - name: Package
+        run: |
+          mkdir -p "dist/$PACKAGE"
+          cp out/mlnative.so LICENSE README.md "dist/$PACKAGE/"
+          cp -r stubs "dist/$PACKAGE/"
+          tar -C dist -czf "dist/$PACKAGE.tar.gz" "$PACKAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: dist/${{ env.PACKAGE }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        run: |
+          (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
+          {
+            sh scripts/release-notes.sh "$VERSION"
+            echo
+            echo "### Prebuilt binaries"
+            echo
+            echo "Linux NTS builds for PHP 8.1 to 8.4 on x86_64 and aarch64, built on Debian 12."
+            echo "They need glibc 2.36+ (e.g. Debian 12, Ubuntu 24.04 or the official \`php:*-bookworm\` images). Alpine/musl and ZTS builds are not supported."
+            echo "Pick the archive matching \`php -v\` and \`uname -m\`, then copy \`mlnative.so\` to \`php-config --extension-dir\`."
+            echo "See [installation]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/v$VERSION/docs/DOCUMENTATION.md#36-prebuilt-binaries-from-github-releases) for details."
+          } > notes.md
+          gh release create "v$VERSION" dist/*.tar.gz dist/SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes-file notes.md
