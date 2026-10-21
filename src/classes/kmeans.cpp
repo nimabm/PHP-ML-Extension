@@ -11,6 +11,8 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_construct, 0, 0, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxIterations, IS_LONG, 0, "300")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tolerance, IS_DOUBLE, 0, "1.0E-4")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seeder, IS_STRING, 0, "\"plusplus\"")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, centroids, IS_ARRAY, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_predict, 0, 1, MAY_BE_ARRAY | MAY_BE_LONG)
@@ -23,12 +25,16 @@ PHP_METHOD(KMeans, __construct) {
     double tolerance = 1e-4;
     zend_long seed = 0;
     bool seed_is_null = true;
-    ZEND_PARSE_PARAMETERS_START(0, 4)
+    zend_string *seeder = nullptr;
+    HashTable *centroids = nullptr;
+    ZEND_PARSE_PARAMETERS_START(0, 6)
         Z_PARAM_OPTIONAL
         Z_PARAM_LONG(clusters)
         Z_PARAM_LONG(max_iterations)
         Z_PARAM_DOUBLE(tolerance)
         Z_PARAM_LONG_OR_NULL(seed, seed_is_null)
+        Z_PARAM_STR(seeder)
+        Z_PARAM_ARRAY_HT_OR_NULL(centroids)
     ZEND_PARSE_PARAMETERS_END();
 
     guard([&] {
@@ -47,7 +53,48 @@ PHP_METHOD(KMeans, __construct) {
         fresh.tolerance = tolerance;
         fresh.has_seed = !seed_is_null;
         fresh.seed = static_cast<std::uint64_t>(seed);
+        if (seeder) {
+            fresh.seeder = mlcore::parse_seeder(std::string(ZSTR_VAL(seeder), ZSTR_LEN(seeder)));
+        }
+        if (centroids) {
+            fresh.preset = mlphp::read_samples(centroids);
+            if (fresh.preset.rows != fresh.clusters) {
+                throw std::invalid_argument("centroids must contain exactly one sample per cluster");
+            }
+            fresh.seeder = mlcore::Seeder::Preset;
+        } else if (fresh.seeder == mlcore::Seeder::Preset) {
+            throw std::invalid_argument("The preset seeder needs the centroids parameter");
+        }
         mlphp::native<Model>(ZEND_THIS) = std::move(fresh);
+    });
+}
+
+PHP_METHOD(KMeans, predictProbability) {
+    HashTable *samples;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY_HT(samples)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        const Model &m = mlphp::native<Model>(ZEND_THIS);
+        mlphp::require_fitted(m.fitted(), ZEND_THIS);
+        const std::size_t k = m.centroids.rows;
+        auto write_row = [&](const double *x, zval *out) {
+            std::vector<double> p(k);
+            m.probabilities(x, p.data());
+            mlphp::write_doubles(out, p);
+        };
+        if (mlphp::is_sample_list(samples)) {
+            const mlcore::Matrix X = mlphp::read_samples(samples, m.features());
+            array_init_size(return_value, static_cast<uint32_t>(X.rows));
+            for (std::size_t r = 0; r < X.rows; ++r) {
+                zval row;
+                write_row(X.row(r), &row);
+                add_next_index_zval(return_value, &row);
+            }
+        } else {
+            const std::vector<double> x = mlphp::read_sample(samples, m.features());
+            write_row(x.data(), return_value);
+        }
     });
 }
 
@@ -141,6 +188,9 @@ PHP_METHOD(KMeans, __serialize) {
     add_assoc_zval(return_value, "labels", &labels);
     add_assoc_double(return_value, "inertia", m.inertia);
     add_assoc_long(return_value, "iterations", m.iterations);
+    const std::string seeder = mlcore::seeder_name(m.seeder);
+    add_assoc_stringl(return_value, "seeder", seeder.data(), seeder.size());
+    mlphp::put_doubles(return_value, "presetCentroids", m.preset.data);
 }
 
 PHP_METHOD(KMeans, __unserialize) {
@@ -186,6 +236,25 @@ PHP_METHOD(KMeans, __unserialize) {
             restored.inertia = mlphp::get_double(data, "inertia");
             restored.iterations = static_cast<long>(mlphp::get_long(data, "iterations"));
         }
+        // Keys added in 0.1.2; older payloads default to k-means++.
+        if (zend_hash_str_exists(data, "seeder", sizeof("seeder") - 1)) {
+            zval *seeder = mlphp::require_key(data, "seeder");
+            if (Z_TYPE_P(seeder) != IS_STRING) {
+                throw std::invalid_argument("Invalid serialized data: \"seeder\" must be a string");
+            }
+            restored.seeder = mlcore::parse_seeder(std::string(Z_STRVAL_P(seeder), Z_STRLEN_P(seeder)));
+            std::vector<double> preset = mlphp::get_doubles(data, "presetCentroids");
+            if (!preset.empty()) {
+                if (!mlphp::shape_matches(preset.size(), restored.clusters, preset.size() / restored.clusters)) {
+                    throw std::invalid_argument("Invalid serialized data: inconsistent KMeans preset");
+                }
+                restored.preset = mlcore::Matrix(restored.clusters, preset.size() / restored.clusters);
+                restored.preset.data = std::move(preset);
+            }
+            if (restored.seeder == mlcore::Seeder::Preset && restored.preset.rows == 0) {
+                throw std::invalid_argument("Invalid serialized data: preset seeder without centroids");
+            }
+        }
         mlphp::native<Model>(ZEND_THIS) = std::move(restored);
     });
 }
@@ -194,6 +263,7 @@ const zend_function_entry methods[] = {
     PHP_ME(KMeans, __construct, arginfo_construct, ZEND_ACC_PUBLIC)
     PHP_ME(KMeans, fit, arginfo_ml_fit_unsupervised, ZEND_ACC_PUBLIC)
     PHP_ME(KMeans, predict, arginfo_predict, ZEND_ACC_PUBLIC)
+    PHP_ME(KMeans, predictProbability, arginfo_ml_samples_to_array, ZEND_ACC_PUBLIC)
     PHP_ME(KMeans, getCentroids, arginfo_ml_get_array, ZEND_ACC_PUBLIC)
     PHP_ME(KMeans, getLabels, arginfo_ml_get_array, ZEND_ACC_PUBLIC)
     PHP_ME(KMeans, getInertia, arginfo_ml_get_float, ZEND_ACC_PUBLIC)
@@ -206,5 +276,5 @@ const zend_function_entry methods[] = {
 }  // namespace
 
 void mlphp::register_kmeans() {
-    register_class<Model>("ML\\Clustering\\KMeans", methods);
+    register_class<Model>("ML\\Clustering\\KMeans", methods, {ce_learner, ce_clusterer, ce_probabilistic});
 }

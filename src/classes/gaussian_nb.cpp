@@ -149,5 +149,5 @@ const zend_function_entry methods[] = {
 }  // namespace
 
 void mlphp::register_gaussian_nb() {
-    register_class<Model>("ML\\Classification\\GaussianNB", methods);
+    register_class<Model>("ML\\Classification\\GaussianNB", methods, {ce_learner, ce_classifier, ce_probabilistic});
 }

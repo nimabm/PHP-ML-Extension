@@ -125,5 +125,5 @@ const zend_function_entry methods[] = {
 }  // namespace
 
 void mlphp::register_standard_scaler() {
-    register_class<Model>("ML\\Preprocessing\\StandardScaler", methods);
+    register_class<Model>("ML\\Preprocessing\\StandardScaler", methods, {ce_transformer, ce_stateful});
 }

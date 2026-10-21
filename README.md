@@ -8,47 +8,70 @@
 
 **Fast machine learning for PHP, written in C++ as a native Zend extension.**
 
-PHP-ML-Native (`mlnative`) gives PHP a set of machine learning models: regression,
-classification, clustering and preprocessing. You train and use them from ordinary PHP code,
-but the math runs as compiled C++ inside the PHP engine instead of in interpreted PHP loops.
-In the benchmark below that makes it **7× to 60× faster** than the same algorithms written
-in pure PHP.
+PHP-ML-Native (`mlnative`) gives PHP more than 100 machine learning classes:
+
+- classification, regression, clustering and anomaly detection
+- ensembles, pipelines and hyper-parameter search
+- preprocessing, dimensionality reduction and text processing
+- neural networks
+- evaluation
+
+You train and use the models from ordinary PHP code, but the math runs as compiled C++ inside
+the PHP engine instead of in interpreted PHP loops. In the benchmark below that makes it
+**14× to 68× faster** than the same algorithms written in pure PHP, and it can use every CPU
+core.
 
 ```php
-$model = (new ML\Regression\LinearRegression())->fit($samples, $targets);
-$model->predict([90, 3]);
+$model = (new ML\Classification\RandomForest(estimators: 100))->fit($samples, $labels);
+$model->predict([5.1, 3.5, 1.4]);
 ```
 
 ## Features
 
-| Task | Class |
+| Area | Classes |
 |---|---|
-| Regression | `ML\Regression\LinearRegression`: least squares with optional ridge (L2) |
-| Classification | `ML\Classification\LogisticRegression`: binary and multiclass, with probabilities |
-| Classification | `ML\Classification\KNearestNeighbors`: euclidean / manhattan |
-| Classification | `ML\Classification\GaussianNB`: Gaussian naive Bayes, with probabilities |
-| Clustering | `ML\Clustering\KMeans`: k-means++ initialization, reproducible seeds |
-| Preprocessing | `ML\Preprocessing\StandardScaler`: zero mean / unit variance |
-| Evaluation | `ML\Metrics`: accuracy, MSE, MAE, R² |
+| Classification | LogisticRegression, KNearestNeighbors, KDNeighbors, RadiusNeighbors, GaussianNB, NaiveBayes, MultinomialNB, ClassificationTree, ExtraTreeClassifier, RandomForest, AdaBoost, LogitBoost, SVC, MLPClassifier |
+| Regression | LinearRegression (ridge), ElasticNet, RegressionTree, ExtraTreeRegressor, RandomForestRegressor, GradientBoost, KNNRegressor, KDNeighborsRegressor, RadiusNeighborsRegressor, SVR, MLPRegressor, Adaline |
+| Clustering | KMeans (k-means++, k-MC², preset seeders), KMedoids, FuzzyCMeans, GaussianMixture, MeanShift, DBSCAN, OPTICS, Ward |
+| Anomaly detection | RobustZScore, GaussianMLE, IsolationForest, LocalOutlierFactor, Loda, OneClassSVM |
+| Meta estimators | OneVsRest, BootstrapAggregator, CommitteeMachine, Pipeline, GridSearch, BayesianSearch |
+| Preprocessing | StandardScaler, MinMaxNormalizer, MaxAbsoluteScaler, RobustStandardizer, PowerTransformer, L1/L2Normalizer, PolynomialExpander, OneHotEncoder, IntervalDiscretizer, NumericStringConverter, BooleanConverter, MissingDataImputer, KNNImputer, HotDeckImputer, LambdaFunction |
+| Dimensionality reduction | PCA, TruncatedSVD, LinearDiscriminantAnalysis, Gaussian/SparseRandomProjector, t-SNE |
+| Text | Word/Whitespace/Sentence/N-gram/K-skip-n-gram tokenizers, Porter stemmer, TextNormalizer, RegexFilter, StopWordFilter, WordCountVectorizer, TokenHashingVectorizer, TF-IDF, BM25 |
+| Neural networks | Dense, Activation (12 functions), Dropout, BatchNorm, PReLU, Swish, Noise; SGD, Momentum, AdaGrad, RMSProp, Adam, AdaMax; learning-rate schedules |
+| Evaluation | 24 metrics, confusion matrix and other reports, HoldOut / KFold / LeavePOut / MonteCarlo validators |
+| Utilities | Dataset generators, train/test split, 11 distance metrics + Gower |
 
 All models share the same behaviour:
 
 - **Familiar API:** `fit()` and `predict()`. `predict()` takes one sample or a whole batch.
 - **Labels:** classifiers accept `int` or `string` labels.
-- **Persistence:** you can save a model with `serialize()` and load it later.
+- **Interchangeable:** marker interfaces (`ML\Classifier`, `ML\Transformer`, …) let pipelines,
+  ensembles, validators and searches work with any model, including your own PHP classes.
+- **Persistence:** you can save a model with `serialize()` and load it later. The binary
+  format is compact, and it's validated when loaded.
+- **Multithreading:** the `mlnative.threads` ini setting enables it, and results are the same
+  for any number of threads.
 - **Errors:** all errors are typed exceptions (`ML\Exception\*`) with clear messages.
 - **Safety:** `fit()` is transactional, `clone` gives an independent copy, and the extension is valgrind-clean.
 
 ## Benchmark
 
 This compares mlnative with straightforward pure-PHP implementations of the same algorithms.
-It ran on PHP 8.3, in Docker on aarch64, with the default `-O2` build:
+It ran on PHP 8.3, in Docker on aarch64 with 4 CPUs, using the default `-O2` build:
 
 | Benchmark | Pure PHP | mlnative | Speedup |
 |---|---:|---:|---:|
-| KNN: fit 3000×16 + predict 300 | 271.6 ms | 6.2 ms | **44×** |
-| LogisticRegression: 200 epochs on 3000×16 | 220.8 ms | 29.3 ms | **7.5×** |
-| LinearRegression: fit 20000×32 | 373.0 ms | 6.2 ms | **60×** |
+| KNN: fit 3000×16 + predict 300 | 280.8 ms | 6.6 ms | **43×** |
+| LogisticRegression: 200 epochs on 3000×16 | 228.6 ms | 16.9 ms | **14×** |
+| LinearRegression: fit 20000×32 | 383.3 ms | 5.6 ms | **68×** |
+| KMeans: 5000×8, 4 clusters, 20 iterations | 63.3 ms | 4.0 ms | **16×** |
+
+| Multithreading (`mlnative.threads`) | 1 thread | 4 threads | Speedup |
+|---|---:|---:|---:|
+| RandomForest: 200 trees on 3000×16 | 833.2 ms | 222.4 ms | **3.7×** |
+| KNN: predict 3000 samples | 63.1 ms | 20.1 ms | **3.1×** |
+| IsolationForest: 300 trees on 3000×16 | 70.9 ms | 20.0 ms | **3.5×** |
 
 To reproduce it, run:
 
@@ -56,7 +79,9 @@ To reproduce it, run:
 docker run --rm mlnative php benchmarks/benchmark.php
 ```
 
-The methodology and notes are in [the documentation](docs/DOCUMENTATION.md#8-benchmarks).
+The methodology and notes are in [the documentation](docs/DOCUMENTATION.md#19-benchmarks).
+For a comparison with Python, JavaScript, Ruby and Lua, and with NumPy, scikit-learn and
+PyTorch, see the [cross-language benchmark report](docs/BENCHMARK_REPORT.md).
 
 ## Installation
 
@@ -153,6 +178,66 @@ echo json_encode($kmeans->getLabels()), "\n";                 // cluster index o
 echo $kmeans->predict([8.2, 8.4]), "\n";                      // cluster of a new point
 ```
 
+### Random forest with multithreading and feature importances
+
+```php
+<?php
+use ML\Classification\RandomForest;
+use ML\Datasets;
+use ML\Metrics;
+
+$data = Datasets::agglomerate(['a' => Datasets::blob([0, 0, 0], 1.0, 200, 1), 'b' => Datasets::blob([2, 2, 0], 1.0, 200, 2)], true, 1);
+[$Xtrain, $Xtest, $ytrain, $ytest] = Datasets::trainTestSplit($data['samples'], $data['labels'], 0.25, true, 1);
+
+ini_set('mlnative.threads', '0');   // use every CPU core
+$forest = (new RandomForest(estimators: 200, seed: 1))->fit($Xtrain, $ytrain);
+printf("accuracy %.2f\n", Metrics::accuracy($ytest, $forest->predict($Xtest)));
+print_r(array_map(fn ($v) => round($v, 2), $forest->getFeatureImportances()));   // the 3rd feature is noise
+```
+
+### Text classification pipeline
+
+```php
+<?php
+use ML\Pipeline;
+use ML\Text\{WordCountVectorizer, TfIdfTransformer, WordStemmer};
+use ML\Classification\MultinomialNB;
+
+$texts = ['win money now', 'cheap pills win', 'meeting at noon', 'lunch with the team', 'win a free prize', 'project meeting notes'];
+$labels = ['spam', 'spam', 'ham', 'ham', 'spam', 'ham'];
+
+$filter = (new Pipeline([new WordCountVectorizer(tokenizer: new WordStemmer()), new TfIdfTransformer()], new MultinomialNB()))
+    ->fit($texts, $labels);
+print_r($filter->predict(['free money', 'team meetings']));   // [spam, ham]
+```
+
+### Anomaly detection
+
+```php
+<?php
+use ML\AnomalyDetection\IsolationForest;
+use ML\Datasets;
+
+$normal = Datasets::blob([0, 0], 1.0, 300, 1);
+$detector = (new IsolationForest(seed: 1))->fit($normal);
+print_r($detector->predict([[0.2, -0.4], [7, 7]]));   // [0, 1]  (1 = anomaly)
+```
+
+### Hyper-parameter search
+
+```php
+<?php
+use ML\ModelSelection\GridSearch;
+use ML\CrossValidation\KFold;
+use ML\Classification\SVC;
+use ML\Datasets;
+
+$data = Datasets::agglomerate(['in' => Datasets::circle(0, 0, 1, 0.1, 60, 1), 'out' => Datasets::circle(0, 0, 3, 0.1, 60, 2)], true, 1);
+$search = (new GridSearch(SVC::class, ['c' => [0.1, 1, 10], 'kernel' => ['linear', 'rbf']], new KFold(3, true, 1)))
+    ->fit($data['samples'], $data['labels']);
+print_r($search->getBest());   // the rbf kernel wins on circles
+```
+
 ### Saving and loading a trained model
 
 Train once, for example in a CLI script or cron job. Then load the trained model on every
@@ -208,9 +293,9 @@ try {
 
 - installation
 - PHP version compatibility
-- every class and parameter, with examples
+- every class and parameter (100+ classes), each with a runnable example
 - model persistence
-- recipes (train/test split, choosing `k`, confusion matrix, CSV loading)
+- recipes (evaluation reports, model comparison, text classification, fraud detection, tuning, CSV loading)
 - benchmarks
 - testing
 - the extension's architecture and how to add a new model
@@ -224,7 +309,7 @@ src/core/      C++17 algorithms (no PHP dependency)
 src/classes/   PHP classes (Zend API bindings)
 src/           Module entry and the PHP <-> C++ bridge
 tests/         phpt test suite (including every example in the docs)
-benchmarks/    Native vs pure-PHP benchmark
+benchmarks/    Native vs pure-PHP benchmark, and the cross-language suite
 examples/      Runnable examples
 docs/          Full documentation
 ```
@@ -247,7 +332,7 @@ release:
 2. Add a changelog entry for that version.
 3. Merge into `main`.
 
-The [release process](docs/DOCUMENTATION.md#91-continuous-integration-and-releases) is
+The [release process](docs/DOCUMENTATION.md#201-continuous-integration-and-releases) is
 described in the documentation.
 
 ## License
