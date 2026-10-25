@@ -12,6 +12,9 @@ use ML\Regression\LinearRegression;
 use ML\Classification\RandomForest;
 use ML\Clustering\KMeans;
 use ML\AnomalyDetection\IsolationForest;
+use ML\Clustering\SpectralClustering;
+use ML\Datasets;
+use ML\Recommender\MatrixFactorization;
 
 mt_srand(1);
 
@@ -206,6 +209,12 @@ $knn = (new KNearestNeighbors(5))->fit($X, $labels);
 [$many] = dataset(3000, 16);
 $threaded[] = ['KNN: predict 3000 samples', fn () => $knn->predict($many)];
 $threaded[] = ['IsolationForest: 300 trees on 3000x16', fn () => (new IsolationForest(300, seed: 1))->fit($X)];
+[$big] = dataset(50000, 8);
+$threaded[] = ['KMeans: 50000x8, 8 clusters', fn () => (new KMeans(8, seed: 1))->fit($big)];
+[$spectral] = dataset(1500, 8);
+$threaded[] = ['SpectralClustering: 1500 samples', fn () => (new SpectralClustering(4, 'nearest', seed: 1))->predict($spectral)];
+$ratings = Datasets::ratings(4000, 1000, 0.02, 4, 0.5, 1);
+$threaded[] = ['MatrixFactorization: 80k ratings, 20 factors', fn () => (new MatrixFactorization(20, seed: 1))->fit($ratings)];
 
 printf("\n%-44s %12s %12s %9s\n", 'multithreading', '1 thread', "$cores threads", 'speedup');
 foreach ($threaded as [$name, $fn]) {

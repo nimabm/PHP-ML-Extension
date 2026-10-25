@@ -353,8 +353,7 @@ void common_network(mlcore::MLP &core, zend_long batch_size, zval *optimizer, ze
     if (schedule && Z_TYPE_P(schedule) == IS_OBJECT) {
         core.schedule = native<ScheduleModel>(schedule).spec;
     }
-    core.has_seed = !seed_null;
-    core.seed = static_cast<std::uint64_t>(seed);
+    parse_seed(seed_null, seed, core.has_seed, core.seed);
 }
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_mlp_classifier_construct, 0, 0, 0)

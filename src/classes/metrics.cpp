@@ -283,6 +283,12 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_trustworthiness, 0, 2, IS_DOUBLE
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, k, IS_LONG, 0, "5")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_at_k, 0, 2, IS_DOUBLE, 0)
+    ZEND_ARG_TYPE_INFO(0, recommended, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, relevant, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, k, IS_LONG, 0, "10")
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_construct, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
@@ -406,6 +412,60 @@ void ZEND_FASTCALL metrics_probabilistic(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
+// Ranking quality of recommendation lists against sets of relevant items:
+// 0 = precision@k, 1 = recall@k, 2 = NDCG@k (binary relevance). Several users
+// (lists of lists) are averaged, skipping users without relevant items.
+template <int Kind>
+void ZEND_FASTCALL metrics_at_k(INTERNAL_FUNCTION_PARAMETERS) {
+    HashTable *recommended, *relevant;
+    zend_long k = 10;
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+        Z_PARAM_ARRAY_HT(recommended)
+        Z_PARAM_ARRAY_HT(relevant)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(k)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        const std::size_t top = positive(k, "k");
+        std::vector<HashTable *> rec_lists, rel_lists;
+        if (zend_hash_num_elements(recommended) > 0 && is_sample_list(recommended)) {
+            for (zval *v : values_of(recommended)) {
+                check(Z_TYPE_P(v) == IS_ARRAY, "recommended must be a list of items or a list of such lists");
+                rec_lists.push_back(Z_ARRVAL_P(v));
+            }
+            for (zval *v : values_of(relevant)) {
+                check(Z_TYPE_P(v) == IS_ARRAY, "relevant must be a list of lists when recommended is");
+                rel_lists.push_back(Z_ARRVAL_P(v));
+            }
+            require_same_size(rec_lists.size(), rel_lists.size());
+        } else {
+            rec_lists.push_back(recommended);
+            rel_lists.push_back(relevant);
+        }
+        double total = 0.0;
+        std::size_t users = 0;
+        for (std::size_t u = 0; u < rec_lists.size(); ++u) {
+            std::vector<Label> truth = read_labels(rel_lists[u], "Relevant item");
+            std::sort(truth.begin(), truth.end());
+            truth.erase(std::unique(truth.begin(), truth.end()), truth.end());
+            if (truth.empty()) continue;
+            const std::vector<Label> ranked = read_labels(rec_lists[u], "Recommended item");
+            double hits = 0.0, dcg = 0.0, ideal = 0.0;
+            for (std::size_t i = 0; i < std::min(top, ranked.size()); ++i) {
+                if (std::binary_search(truth.begin(), truth.end(), ranked[i])) {
+                    hits += 1.0;
+                    dcg += 1.0 / std::log2(static_cast<double>(i) + 2.0);
+                }
+            }
+            for (std::size_t i = 0; i < std::min(top, truth.size()); ++i) ideal += 1.0 / std::log2(static_cast<double>(i) + 2.0);
+            total += Kind == 0 ? hits / static_cast<double>(top)
+                               : (Kind == 1 ? hits / static_cast<double>(truth.size()) : dcg / ideal);
+            ++users;
+        }
+        RETVAL_DOUBLE(users > 0 ? total / static_cast<double>(users) : 0.0);
+    });
+}
+
 void ZEND_FASTCALL metrics_top_k(INTERNAL_FUNCTION_PARAMETERS) {
     HashTable *expected, *probabilities;
     zend_long k = 3;
@@ -489,7 +549,6 @@ void ZEND_FASTCALL metrics_trustworthiness(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
-#define ML_STATIC(name, handler, arginfo) ZEND_FENTRY(name, (handler), arginfo, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
 
 const zend_function_entry methods[] = {
     ZEND_FENTRY(__construct, metrics_construct, arginfo_construct, ZEND_ACC_PRIVATE)
@@ -505,6 +564,9 @@ const zend_function_entry methods[] = {
     ML_STATIC(brierScore, metrics_probabilistic<0>, arginfo_probabilistic)
     ML_STATIC(probabilisticAccuracy, metrics_probabilistic<1>, arginfo_probabilistic)
     ML_STATIC(topKAccuracy, metrics_top_k, arginfo_top_k)
+    ML_STATIC(precisionAtK, metrics_at_k<0>, arginfo_at_k)
+    ML_STATIC(recallAtK, metrics_at_k<1>, arginfo_at_k)
+    ML_STATIC(ndcgAtK, metrics_at_k<2>, arginfo_at_k)
     ML_STATIC(meanSquaredError, metrics_regression<0>, arginfo_metric)
     ML_STATIC(meanAbsoluteError, metrics_regression<1>, arginfo_metric)
     ML_STATIC(r2Score, metrics_regression<2>, arginfo_metric)

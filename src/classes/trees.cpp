@@ -174,8 +174,7 @@ void ZEND_FASTCALL tree_construct(INTERNAL_FUNCTION_PARAMETERS) {
     guard([&] {
         M fresh;
         fresh.params = tree_params(max_height, max_leaf_size, min_purity_increase, max_features, max_features_null);
-        fresh.has_seed = !seed_null;
-        fresh.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.has_seed, fresh.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -341,8 +340,7 @@ void configure_forest(Forest &f, zend_long estimators, double ratio, bool balanc
     f.balanced = balanced;
     f.params = tree_params(max_height, max_leaf_size, min_purity_increase, max_features, max_features_null);
     f.params.extra = extra;
-    f.has_seed = !seed_null;
-    f.seed = static_cast<std::uint64_t>(seed);
+    parse_seed(seed_null, seed, f.has_seed, f.seed);
 }
 
 void ZEND_FASTCALL random_forest_construct(INTERNAL_FUNCTION_PARAMETERS) {

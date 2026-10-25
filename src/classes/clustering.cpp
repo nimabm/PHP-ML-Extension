@@ -1,53 +1,15 @@
-// KMedoids, FuzzyCMeans, GaussianMixture, MeanShift (learners) and DBSCAN,
-// OPTICS, Ward (cluster the samples passed to predict()).
+// KMedoids, MiniBatchKMeans, FuzzyCMeans, GaussianMixture, MeanShift (learners)
+// and DBSCAN, OPTICS, Ward, SpectralClustering (cluster the samples passed to predict()).
 
 #include "binding.hpp"
 #include "core/clustering.hpp"
+#include "core/kmeans.hpp"
 
 namespace {
 
 using namespace mlphp;
 using mlcore::ArchiveReader;
 using mlcore::ArchiveWriter;
-
-// Membership/probability rows as lists indexed by cluster number.
-template <typename M>
-void ZEND_FASTCALL cluster_probabilities(INTERNAL_FUNCTION_PARAMETERS) {
-    HashTable *samples;
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_ARRAY_HT(samples)
-    ZEND_PARSE_PARAMETERS_END();
-    guard([&] {
-        const M &m = native<M>(ZEND_THIS);
-        require_fitted(m.fitted(), ZEND_THIS);
-        const std::size_t k = m.clusters();
-        if (is_sample_list(samples)) {
-            const mlcore::Matrix X = read_samples(samples, m.features());
-            mlcore::Matrix P(X.rows, k);
-            mlcore::parallel_for(X.rows, threads(), [&](std::size_t r) { m.probabilities(X.row(r), P.row(r)); });
-            write_matrix(return_value, P);
-        } else {
-            const std::vector<double> x = read_sample(samples, m.features());
-            std::vector<double> p(k);
-            m.probabilities(x.data(), p.data());
-            write_doubles(return_value, p);
-        }
-    });
-}
-
-template <typename M, typename Getter>
-void matrix_getter(zval *self, zval *return_value, Getter g) {
-    guard([&] {
-        const M &m = native<M>(self);
-        require_fitted(m.fitted(), self);
-        g(m, return_value);
-    });
-}
-
-void parse_seed(bool seed_null, zend_long seed, bool &has_seed, std::uint64_t &out) {
-    has_seed = !seed_null;
-    out = static_cast<std::uint64_t>(seed);
-}
 
 // ---- KMedoids ------------------------------------------------------------------------
 
@@ -100,19 +62,19 @@ void ZEND_FASTCALL kmedoids_construct(INTERNAL_FUNCTION_PARAMETERS) {
 
 void ZEND_FASTCALL kmedoids_medoids(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { write_matrix(out, m.core.medoids); });
+    fitted_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { write_matrix(out, m.core.medoids); });
 }
 void ZEND_FASTCALL kmedoids_labels(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { write_ints(out, m.core.labels); });
+    fitted_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { write_ints(out, m.core.labels); });
 }
 void ZEND_FASTCALL kmedoids_inertia(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.inertia); });
+    fitted_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.inertia); });
 }
 void ZEND_FASTCALL kmedoids_iterations(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
+    fitted_getter<KMedoidsModel>(ZEND_THIS, return_value, [](const KMedoidsModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
 }
 
 const zend_function_entry kmedoids_methods[] = {
@@ -180,22 +142,22 @@ void ZEND_FASTCALL fuzzy_construct(INTERNAL_FUNCTION_PARAMETERS) {
 
 void ZEND_FASTCALL fuzzy_centroids(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<FuzzyModel>(ZEND_THIS, return_value, [](const FuzzyModel &m, zval *out) { write_matrix(out, m.core.centroids); });
+    fitted_getter<FuzzyModel>(ZEND_THIS, return_value, [](const FuzzyModel &m, zval *out) { write_matrix(out, m.core.centroids); });
 }
 void ZEND_FASTCALL fuzzy_inertia(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<FuzzyModel>(ZEND_THIS, return_value, [](const FuzzyModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.inertia); });
+    fitted_getter<FuzzyModel>(ZEND_THIS, return_value, [](const FuzzyModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.inertia); });
 }
 void ZEND_FASTCALL fuzzy_iterations(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<FuzzyModel>(ZEND_THIS, return_value, [](const FuzzyModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
+    fitted_getter<FuzzyModel>(ZEND_THIS, return_value, [](const FuzzyModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
 }
 
 const zend_function_entry fuzzy_methods[] = {
     ML_METHOD(__construct, fuzzy_construct, arginfo_fuzzy_construct)
     ML_METHOD(fit, fit_unsupervised<FuzzyModel>, arginfo_ml_fit_unsupervised)
     ML_METHOD(predict, predict_cluster<FuzzyModel>, arginfo_ml_predict_int)
-    ML_METHOD(predictProbability, cluster_probabilities<FuzzyModel>, arginfo_ml_samples_to_array)
+    ML_METHOD(predictProbability, predict_memberships<FuzzyModel>, arginfo_ml_samples_to_array)
     ML_METHOD(getCentroids, fuzzy_centroids, arginfo_ml_get_array)
     ML_METHOD(getInertia, fuzzy_inertia, arginfo_ml_get_float)
     ML_METHOD(getIterations, fuzzy_iterations, arginfo_ml_get_int)
@@ -255,15 +217,15 @@ void ZEND_FASTCALL mixture_construct(INTERNAL_FUNCTION_PARAMETERS) {
 
 void ZEND_FASTCALL mixture_means(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { write_matrix(out, m.core.means); });
+    fitted_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { write_matrix(out, m.core.means); });
 }
 void ZEND_FASTCALL mixture_variances(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { write_matrix(out, m.core.variances); });
+    fitted_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { write_matrix(out, m.core.variances); });
 }
 void ZEND_FASTCALL mixture_priors(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) {
+    fitted_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) {
         std::vector<double> p(m.core.log_priors.size());
         for (std::size_t i = 0; i < p.size(); ++i) {
             p[i] = std::exp(m.core.log_priors[i]);
@@ -273,18 +235,18 @@ void ZEND_FASTCALL mixture_priors(INTERNAL_FUNCTION_PARAMETERS) {
 }
 void ZEND_FASTCALL mixture_log_likelihood(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.log_likelihood); });
+    fitted_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.log_likelihood); });
 }
 void ZEND_FASTCALL mixture_iterations(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
+    fitted_getter<MixtureModel>(ZEND_THIS, return_value, [](const MixtureModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
 }
 
 const zend_function_entry mixture_methods[] = {
     ML_METHOD(__construct, mixture_construct, arginfo_mixture_construct)
     ML_METHOD(fit, fit_unsupervised<MixtureModel>, arginfo_ml_fit_unsupervised)
     ML_METHOD(predict, predict_cluster<MixtureModel>, arginfo_ml_predict_int)
-    ML_METHOD(predictProbability, cluster_probabilities<MixtureModel>, arginfo_ml_samples_to_array)
+    ML_METHOD(predictProbability, predict_memberships<MixtureModel>, arginfo_ml_samples_to_array)
     ML_METHOD(getMeans, mixture_means, arginfo_ml_get_array)
     ML_METHOD(getVariances, mixture_variances, arginfo_ml_get_array)
     ML_METHOD(getPriors, mixture_priors, arginfo_ml_get_array)
@@ -343,11 +305,11 @@ void ZEND_FASTCALL mean_shift_construct(INTERNAL_FUNCTION_PARAMETERS) {
 
 void ZEND_FASTCALL mean_shift_centroids(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MeanShiftModel>(ZEND_THIS, return_value, [](const MeanShiftModel &m, zval *out) { write_matrix(out, m.core.centroids); });
+    fitted_getter<MeanShiftModel>(ZEND_THIS, return_value, [](const MeanShiftModel &m, zval *out) { write_matrix(out, m.core.centroids); });
 }
 void ZEND_FASTCALL mean_shift_radius(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    matrix_getter<MeanShiftModel>(ZEND_THIS, return_value, [](const MeanShiftModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.fitted_radius); });
+    fitted_getter<MeanShiftModel>(ZEND_THIS, return_value, [](const MeanShiftModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.fitted_radius); });
 }
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_estimate_radius, 0, 1, IS_DOUBLE, 0)
@@ -578,6 +540,169 @@ const zend_function_entry ward_methods[] = {
     ML_METHOD(__unserialize, unserialize_native<WardParams>, arginfo_ml_unserialize)
     PHP_FE_END};
 
+// ---- MiniBatchKMeans ------------------------------------------------------------------------
+
+struct MiniBatchModel {
+    static constexpr std::uint32_t kTag = mlcore::tag("MBKM");
+    mlcore::MiniBatchKMeans core;
+    bool fitted() const { return core.fitted(); }
+    std::size_t features() const { return core.features(); }
+    std::size_t clusters() const { return core.centroids.rows; }
+    void fit(const mlcore::Matrix &X, unsigned threads) { core.fit(X, threads); }
+    void partial_fit(const mlcore::Matrix &X, unsigned threads) { core.partial_fit(X, threads); }
+    int predict_one(const double *x) const { return core.predict_one(x); }
+    void probabilities(const double *x, double *out) const { core.probabilities(x, out); }
+    void save(ArchiveWriter &w) const { core.save(w); }
+    void load(ArchiveReader &r) { core.load(r); }
+};
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_minibatch_construct, 0, 0, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, clusters, IS_LONG, 0, "8")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, batchSize, IS_LONG, 0, "256")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxIterations, IS_LONG, 0, "100")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tolerance, IS_DOUBLE, 0, "1.0E-4")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seeder, IS_STRING, 0, "\"plusplus\"")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, centroids, IS_ARRAY, 1, "null")
+ZEND_END_ARG_INFO()
+
+void ZEND_FASTCALL minibatch_construct(INTERNAL_FUNCTION_PARAMETERS) {
+    zend_long clusters = 8, batch = 256, max_iterations = 100, seed = 0;
+    double tolerance = 1e-4;
+    bool seed_null = true;
+    zend_string *seeder = nullptr;
+    HashTable *centroids = nullptr;
+    ZEND_PARSE_PARAMETERS_START(0, 7)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(clusters)
+        Z_PARAM_LONG(batch)
+        Z_PARAM_LONG(max_iterations)
+        Z_PARAM_DOUBLE(tolerance)
+        Z_PARAM_LONG_OR_NULL(seed, seed_null)
+        Z_PARAM_STR(seeder)
+        Z_PARAM_ARRAY_HT_OR_NULL(centroids)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        MiniBatchModel fresh;
+        mlcore::MiniBatchKMeans &c = fresh.core;
+        c.clusters = positive(clusters, "clusters");
+        c.batch_size = positive(batch, "batchSize");
+        c.max_iterations = static_cast<long>(positive(max_iterations, "maxIterations"));
+        c.tolerance = non_negative(tolerance, "tolerance");
+        parse_seed(seed_null, seed, c.has_seed, c.seed);
+        if (seeder) {
+            c.seeder = mlcore::parse_seeder(zstr(seeder));
+        }
+        if (centroids) {
+            c.preset = read_samples(centroids);
+            check(c.preset.rows == c.clusters, "centroids must contain exactly one sample per cluster");
+            c.seeder = mlcore::Seeder::Preset;
+        } else {
+            check(c.seeder != mlcore::Seeder::Preset, "The preset seeder needs the centroids parameter");
+        }
+        reset(ZEND_THIS, std::move(fresh));
+    });
+}
+
+void ZEND_FASTCALL minibatch_centroids(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<MiniBatchModel>(ZEND_THIS, return_value, [](const MiniBatchModel &m, zval *out) { write_matrix(out, m.core.centroids); });
+}
+void ZEND_FASTCALL minibatch_labels(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<MiniBatchModel>(ZEND_THIS, return_value, [](const MiniBatchModel &m, zval *out) { write_ints(out, m.core.labels); });
+}
+void ZEND_FASTCALL minibatch_inertia(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<MiniBatchModel>(ZEND_THIS, return_value, [](const MiniBatchModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.inertia); });
+}
+void ZEND_FASTCALL minibatch_iterations(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<MiniBatchModel>(ZEND_THIS, return_value, [](const MiniBatchModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
+}
+
+const zend_function_entry minibatch_methods[] = {
+    ML_METHOD(__construct, minibatch_construct, arginfo_minibatch_construct)
+    ML_METHOD(fit, fit_unsupervised<MiniBatchModel>, arginfo_ml_fit_unsupervised)
+    ML_METHOD(partialFit, partial_fit<MiniBatchModel>, arginfo_ml_fit_unsupervised)
+    ML_METHOD(predict, predict_cluster<MiniBatchModel>, arginfo_ml_predict_int)
+    ML_METHOD(predictProbability, predict_memberships<MiniBatchModel>, arginfo_ml_samples_to_array)
+    ML_METHOD(getCentroids, minibatch_centroids, arginfo_ml_get_array)
+    ML_METHOD(getLabels, minibatch_labels, arginfo_ml_get_array)
+    ML_METHOD(getInertia, minibatch_inertia, arginfo_ml_get_float)
+    ML_METHOD(getIterations, minibatch_iterations, arginfo_ml_get_int)
+    ML_METHOD(__serialize, serialize_native<MiniBatchModel>, arginfo_ml_get_array)
+    ML_METHOD(__unserialize, unserialize_native<MiniBatchModel>, arginfo_ml_unserialize)
+    PHP_FE_END};
+
+// ---- SpectralClustering ---------------------------------------------------------------------
+
+struct SpectralModel {
+    static constexpr std::uint32_t kTag = mlcore::tag("SPEC");
+    mlcore::SpectralParams params;
+    void save(ArchiveWriter &w) const { params.save(w); }
+    void load(ArchiveReader &r) { params.load(r); }
+};
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_spectral_construct, 0, 0, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, clusters, IS_LONG, 0, "8")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, affinity, IS_STRING, 0, "\"rbf\"")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, gamma, IS_DOUBLE, 0, "1.0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, neighbors, IS_LONG, 0, "10")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, runs, IS_LONG, 0, "10")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+void ZEND_FASTCALL spectral_construct(INTERNAL_FUNCTION_PARAMETERS) {
+    zend_long clusters = 8, neighbors = 10, runs = 10, seed = 0;
+    double gamma = 1.0;
+    bool seed_null = true;
+    zend_string *affinity = nullptr;
+    ZEND_PARSE_PARAMETERS_START(0, 6)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(clusters)
+        Z_PARAM_STR(affinity)
+        Z_PARAM_DOUBLE(gamma)
+        Z_PARAM_LONG(neighbors)
+        Z_PARAM_LONG(runs)
+        Z_PARAM_LONG_OR_NULL(seed, seed_null)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        SpectralModel fresh;
+        mlcore::SpectralParams &p = fresh.params;
+        p.clusters = positive(clusters, "clusters");
+        if (affinity) {
+            const std::string name = zstr(affinity);
+            check(name == "rbf" || name == "nearest", "affinity must be \"rbf\" or \"nearest\"");
+            p.nearest = name == "nearest";
+        }
+        p.gamma = strictly_positive(gamma, "gamma");
+        p.neighbors = positive(neighbors, "neighbors");
+        check(runs >= 1 && runs <= 1000, "runs must be between 1 and 1000");
+        p.runs = static_cast<std::size_t>(runs);
+        parse_seed(seed_null, seed, p.has_seed, p.seed);
+        reset(ZEND_THIS, std::move(fresh));
+    });
+}
+
+void ZEND_FASTCALL spectral_predict(INTERNAL_FUNCTION_PARAMETERS) {
+    HashTable *samples;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY_HT(samples)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        const SpectralModel &m = native<SpectralModel>(ZEND_THIS);
+        write_ints(return_value, mlcore::spectral_clustering(read_samples(samples), m.params, threads()));
+    });
+}
+
+const zend_function_entry spectral_methods[] = {
+    ML_METHOD(__construct, spectral_construct, arginfo_spectral_construct)
+    ML_METHOD(predict, spectral_predict, arginfo_cluster_predict)
+    ML_METHOD(__serialize, serialize_native<SpectralModel>, arginfo_ml_get_array)
+    ML_METHOD(__unserialize, unserialize_native<SpectralModel>, arginfo_ml_unserialize)
+    PHP_FE_END};
+
 }  // namespace
 
 void mlphp::register_clustering() {
@@ -588,4 +713,7 @@ void mlphp::register_clustering() {
     register_class<DbscanParams>("ML\\Clustering\\DBSCAN", dbscan_methods, {ce_clusterer});
     register_class<OpticsParams>("ML\\Clustering\\OPTICS", optics_methods, {ce_clusterer});
     register_class<WardParams>("ML\\Clustering\\Ward", ward_methods, {ce_clusterer});
+    register_class<MiniBatchModel>("ML\\Clustering\\MiniBatchKMeans", minibatch_methods,
+                                   {ce_learner, ce_online, ce_clusterer, ce_probabilistic});
+    register_class<SpectralModel>("ML\\Clustering\\SpectralClustering", spectral_methods, {ce_clusterer});
 }

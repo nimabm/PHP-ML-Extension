@@ -179,6 +179,8 @@ void NeighborIndex::nearest(const double *q, std::size_t k, std::vector<Neighbor
         out[i] = {euclidean ? squared_distance(q, samples.row(i), samples.cols) : metric(q, samples.row(i), samples.cols), i};
     }
     k = std::min(k, n);
+    // A heap of k elements: for the usual small k this beats nth_element, which
+    // partitions the whole array several times.
     std::partial_sort(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(k), out.end());
     out.resize(k);
     if (euclidean) {
@@ -214,6 +216,7 @@ void NeighborIndex::load(ArchiveReader &r) {
     metric = Distance::load(r);
     use_tree = r.boolean();
     leaf_size = r.size();
+    ArchiveReader::require(leaf_size >= 1, "leaf size must be at least 1");
     Matrix X = r.matrix();
     if (use_tree) {
         ArchiveReader::require(metric.coordinate_bounded(), "K-d tree with unsupported metric");
@@ -222,6 +225,31 @@ void NeighborIndex::load(ArchiveReader &r) {
 }
 
 // ---- voting -----------------------------------------------------------------------
+
+NeighborIndex make_index(const Matrix &X, const Distance &metric) {
+    NeighborIndex index;
+    index.metric = metric;
+    index.use_tree = metric.coordinate_bounded() && X.cols <= 16 && X.rows >= 256;
+    index.build(X);
+    return index;
+}
+
+std::vector<std::vector<Neighbor>> neighbor_graph(const NeighborIndex &index, std::size_t k, unsigned threads) {
+    const std::size_t n = index.samples.rows;
+    k = std::min(k, n > 0 ? n - 1 : 0);
+    std::vector<std::vector<Neighbor>> graph(n);
+    parallel_for(n, threads, [&](std::size_t i) {
+        std::vector<Neighbor> &out = graph[i];
+        index.nearest(index.samples.row(i), k + 1, out);
+        // Drop the sample itself; with duplicates it may have been pushed out.
+        const auto self = std::find_if(out.begin(), out.end(), [&](const Neighbor &nb) { return nb.second == i; });
+        if (self != out.end()) {
+            out.erase(self);
+        }
+        out.resize(std::min(out.size(), k));
+    });
+    return graph;
+}
 
 int vote(const std::vector<Neighbor> &neighbors, const std::vector<int> &labels, std::size_t classes, bool weighted) {
     std::vector<double> votes(classes, 0.0);

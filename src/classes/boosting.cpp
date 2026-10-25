@@ -30,11 +30,6 @@ std::vector<double> combined_importances(const std::vector<mlcore::DecisionTree>
     return total;
 }
 
-void seed_from(bool seed_null, zend_long seed, bool &has_seed, std::uint64_t &out) {
-    has_seed = !seed_null;
-    out = static_cast<std::uint64_t>(seed);
-}
-
 // ---- AdaBoost ----------------------------------------------------------------------------
 
 struct AdaBoostModel {
@@ -95,7 +90,7 @@ void ZEND_FASTCALL adaboost_construct(INTERNAL_FUNCTION_PARAMETERS) {
         fresh.core.ratio = ratio;
         fresh.core.base.max_height = positive(max_height, "maxHeight");
         fresh.core.min_change = non_negative(min_change, "minChange");
-        seed_from(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -165,7 +160,7 @@ void ZEND_FASTCALL logitboost_construct(INTERNAL_FUNCTION_PARAMETERS) {
         fresh.core.ratio = ratio;
         fresh.core.base.max_height = positive(max_height, "maxHeight");
         fresh.core.min_change = non_negative(min_change, "minChange");
-        seed_from(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -226,7 +221,7 @@ void ZEND_FASTCALL gradient_construct(INTERNAL_FUNCTION_PARAMETERS) {
         fresh.core.window = positive(window, "window");
         check(hold_out >= 0.0 && hold_out < 0.5, "holdOut must be at least 0 and less than 0.5");
         fresh.core.hold_out = hold_out;
-        seed_from(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }

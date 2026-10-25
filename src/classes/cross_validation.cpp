@@ -187,7 +187,6 @@ void ZEND_FASTCALL report_contingency(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
-#define ML_STATIC(name, handler, arginfo) ZEND_FENTRY(name, (handler), arginfo, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
 
 const zend_function_entry report_methods[] = {
     ML_STATIC(confusionMatrix, report_confusion, arginfo_report)
@@ -338,14 +337,14 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_test, 0, 3, IS_DOUBLE, 0)
     ZEND_ARG_TYPE_INFO(0, estimator, IS_OBJECT, 0)
     ZEND_ARG_TYPE_INFO(0, samples, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, targets, IS_ARRAY, 0)
-    ZEND_ARG_INFO_WITH_DEFAULT_VALUE(0, metric, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, metric, IS_MIXED, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_scores, 0, 3, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, estimator, IS_OBJECT, 0)
     ZEND_ARG_TYPE_INFO(0, samples, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, targets, IS_ARRAY, 0)
-    ZEND_ARG_INFO_WITH_DEFAULT_VALUE(0, metric, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, metric, IS_MIXED, 1, "null")
 ZEND_END_ARG_INFO()
 
 void ZEND_FASTCALL holdout_construct(INTERNAL_FUNCTION_PARAMETERS) {
@@ -363,8 +362,7 @@ void ZEND_FASTCALL holdout_construct(INTERNAL_FUNCTION_PARAMETERS) {
         check(ratio > 0.0 && ratio < 1.0, "ratio must be between 0 and 1 (exclusive)");
         v.ratio = ratio;
         v.stratify = stratify;
-        v.has_seed = !seed_null;
-        v.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, v.has_seed, v.seed);
         reset(ZEND_THIS, v);
     });
 }
@@ -383,8 +381,7 @@ void ZEND_FASTCALL kfold_construct(INTERNAL_FUNCTION_PARAMETERS) {
         check(k >= 2, "k must be at least 2");
         v.k = static_cast<std::size_t>(k);
         v.stratify = stratify;
-        v.has_seed = !seed_null;
-        v.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, v.has_seed, v.seed);
         reset(ZEND_THIS, v);
     });
 }
@@ -419,8 +416,7 @@ void ZEND_FASTCALL monte_carlo_construct(INTERNAL_FUNCTION_PARAMETERS) {
         check(ratio > 0.0 && ratio < 1.0, "ratio must be between 0 and 1 (exclusive)");
         v.ratio = ratio;
         v.stratify = stratify;
-        v.has_seed = !seed_null;
-        v.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, v.has_seed, v.seed);
         reset(ZEND_THIS, v);
     });
 }

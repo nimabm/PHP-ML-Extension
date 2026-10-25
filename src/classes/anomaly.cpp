@@ -107,8 +107,7 @@ void ZEND_FASTCALL iforest_construct(INTERNAL_FUNCTION_PARAMETERS) {
         fresh.core.max_samples = positive(max_samples, "maxSamples");
         check(fresh.core.max_samples >= 2, "maxSamples must be at least 2");
         fresh.core.contamination = contamination_null ? -1.0 : contamination_arg(contamination);
-        fresh.core.has_seed = !seed_null;
-        fresh.core.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -163,8 +162,7 @@ void ZEND_FASTCALL loda_construct(INTERNAL_FUNCTION_PARAMETERS) {
         fresh.core.estimators = positive(estimators, "estimators");
         fresh.core.bins = bins_null ? 0 : positive(bins, "bins");
         fresh.core.contamination = contamination_arg(contamination);
-        fresh.core.has_seed = !seed_null;
-        fresh.core.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }

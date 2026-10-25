@@ -274,6 +274,10 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_documents, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, documents, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_fit_documents, 0, 1, MAY_BE_STATIC)
+    ZEND_ARG_TYPE_INFO(0, documents, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
 void ZEND_FASTCALL normalizer_transform(INTERNAL_FUNCTION_PARAMETERS) {
     HashTable *documents;
     ZEND_PARSE_PARAMETERS_START(1, 1)
@@ -657,7 +661,7 @@ void ZEND_FASTCALL vectorizer_unserialize(INTERNAL_FUNCTION_PARAMETERS) {
 
 const zend_function_entry word_count_methods[] = {
     ML_METHOD(__construct, word_count_construct, arginfo_word_count_construct)
-    ML_METHOD(fit, word_count_fit<false>, arginfo_documents)
+    ML_METHOD(fit, word_count_fit<false>, arginfo_fit_documents)
     ML_METHOD(transform, word_count_transform, arginfo_documents)
     ML_METHOD(fitTransform, word_count_fit<true>, arginfo_documents)
     ML_METHOD(getVocabulary, word_count_vocabulary, arginfo_ml_get_array)

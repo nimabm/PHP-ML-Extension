@@ -19,8 +19,25 @@
 #include "arginfo.hpp"
 
 #define ML_METHOD(name, handler, arginfo) ZEND_FENTRY(name, (handler), arginfo, ZEND_ACC_PUBLIC)
+#define ML_STATIC(name, handler, arginfo) ZEND_FENTRY(name, (handler), arginfo, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
 
 namespace mlphp {
+
+// Body of a getter that needs a fitted model: f(model, return_value).
+template <typename M, typename F>
+void fitted_getter(zval *self, zval *return_value, F f) {
+    guard([&] {
+        const M &m = native<M>(self);
+        require_fitted(m.fitted(), self);
+        f(m, return_value);
+    });
+}
+
+// Stores a nullable `?int $seed` constructor argument.
+inline void parse_seed(bool seed_null, zend_long seed, bool &has_seed, std::uint64_t &out) {
+    has_seed = !seed_null;
+    out = static_cast<std::uint64_t>(seed);
+}
 
 // ---- serialization ----------------------------------------------------------------
 
@@ -191,6 +208,32 @@ void ZEND_FASTCALL predict_cluster(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
+// Cluster memberships as lists indexed by cluster number (clusterers that
+// provide clusters() and probabilities(x, out)).
+template <typename M>
+void ZEND_FASTCALL predict_memberships(INTERNAL_FUNCTION_PARAMETERS) {
+    HashTable *samples;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY_HT(samples)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        const M &m = native<M>(ZEND_THIS);
+        require_fitted(m.fitted(), ZEND_THIS);
+        const std::size_t k = m.clusters();
+        if (is_sample_list(samples)) {
+            const mlcore::Matrix X = read_samples(samples, m.features());
+            mlcore::Matrix P(X.rows, k);
+            mlcore::parallel_for(X.rows, threads(), [&](std::size_t r) { m.probabilities(X.row(r), P.row(r)); });
+            write_matrix(return_value, P);
+        } else {
+            const std::vector<double> x = read_sample(samples, m.features());
+            std::vector<double> p(k);
+            m.probabilities(x.data(), p.data());
+            write_doubles(return_value, p);
+        }
+    });
+}
+
 template <typename M>
 void ZEND_FASTCALL predict_anomaly(INTERNAL_FUNCTION_PARAMETERS) {
     HashTable *samples;
@@ -291,6 +334,25 @@ void ZEND_FASTCALL fit_transform(INTERNAL_FUNCTION_PARAMETERS) {
         mlcore::parallel_for(X.rows, threads(), [&](std::size_t r) { m.transform_row(X.row(r), Y.row(r)); });
         write_matrix(return_value, Y);
     });
+}
+
+// fit() for incremental learners: the first call fixes the number of features.
+template <typename M>
+void ZEND_FASTCALL partial_fit(INTERNAL_FUNCTION_PARAMETERS) {
+    HashTable *samples;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY_HT(samples)
+    ZEND_PARSE_PARAMETERS_END();
+    if (!guard([&] {
+            M &m = native<M>(ZEND_THIS);
+            const mlcore::Matrix X = read_samples(samples, m.fitted() ? m.features() : 0);
+            M next = m;
+            next.partial_fit(X, threads());
+            m = std::move(next);
+        })) {
+        RETURN_THROWS();
+    }
+    RETURN_OBJ_COPY(Z_OBJ_P(ZEND_THIS));
 }
 
 template <typename M>

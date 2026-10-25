@@ -55,6 +55,14 @@ private:
     KDTree tree_;
 };
 
+// An index over X with `metric` that uses a K-d tree when it can help
+// (low-dimensional data with a Minkowski-family distance).
+NeighborIndex make_index(const Matrix &X, const Distance &metric);
+
+// The k nearest neighbors of every indexed sample, itself excluded, nearest first
+// (k is capped at samples - 1).
+std::vector<std::vector<Neighbor>> neighbor_graph(const NeighborIndex &index, std::size_t k, unsigned threads);
+
 // Weight of a neighbor at distance d: 1 when unweighted, else inverse distance.
 inline double neighbor_weight(bool weighted, double d) { return weighted ? 1.0 / (d + 1e-9) : 1.0; }
 

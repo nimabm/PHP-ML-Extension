@@ -4,6 +4,9 @@
 #include <numeric>
 #include <queue>
 
+#include "kmeans.hpp"
+#include "linalg.hpp"
+
 namespace mlcore {
 
 Seeder parse_seeder(const std::string &name) {
@@ -860,6 +863,97 @@ std::vector<int> ward(const Matrix &X, std::size_t clusters) {
         labels[i] = id[root];
     }
     return labels;
+}
+
+}  // namespace mlcore
+
+// ---- spectral clustering ---------------------------------------------------------------------
+
+namespace mlcore {
+
+void SpectralParams::save(ArchiveWriter &w) const {
+    w.size(clusters);
+    w.boolean(nearest);
+    w.f64(gamma);
+    w.size(neighbors);
+    w.size(runs);
+    w.boolean(has_seed);
+    w.u64(seed);
+}
+
+void SpectralParams::load(ArchiveReader &r) {
+    clusters = r.size();
+    nearest = r.boolean();
+    gamma = r.f64();
+    neighbors = r.size();
+    runs = r.size(1000);
+    has_seed = r.boolean();
+    seed = r.u64();
+    ArchiveReader::require(clusters >= 1 && gamma > 0.0 && neighbors >= 1 && runs >= 1, "bad spectral clustering parameters");
+}
+
+std::vector<int> spectral_clustering(const Matrix &X, const SpectralParams &p, unsigned threads) {
+    require_training_set(X, X.rows);
+    const std::size_t n = X.rows, k = p.clusters;
+    if (k > n) {
+        throw std::invalid_argument("Number of clusters (" + std::to_string(k) + ") cannot exceed the number of samples (" +
+                                    std::to_string(n) + ")");
+    }
+    std::vector<double> W(n * n, 0.0);
+    if (p.nearest) {
+        // Symmetrized connectivity: 1 for mutual neighbors, 0.5 for one-sided ones.
+        const auto graph = neighbor_graph(make_index(X, Distance()), p.neighbors, threads);
+        for (std::size_t i = 0; i < n; ++i) {
+            for (const Neighbor &nb : graph[i]) {
+                W[i * n + nb.second] += 0.5;
+                W[nb.second * n + i] += 0.5;
+            }
+        }
+    } else {
+        parallel_for(n, threads, [&](std::size_t i) {
+            for (std::size_t j = 0; j < i; ++j) {
+                W[i * n + j] = std::exp(-p.gamma * squared_distance(X.row(i), X.row(j), X.cols));
+            }
+        });
+        for (std::size_t i = 0; i < n; ++i) {
+            for (std::size_t j = 0; j < i; ++j) W[j * n + i] = W[i * n + j];
+        }
+    }
+    std::vector<double> scale(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        double degree = 0.0;
+        for (std::size_t j = 0; j < n; ++j) degree += W[i * n + j];
+        scale[i] = degree > 0.0 ? 1.0 / std::sqrt(degree) : 0.0;  // isolated points stay at the origin
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < n; ++j) W[i * n + j] *= scale[i] * scale[j];
+    }
+    std::vector<double> values;
+    Matrix U;
+    top_eigen(W, n, k, values, U, threads);
+    for (std::size_t i = 0; i < n; ++i) {
+        double *u = U.row(i);
+        const double norm = std::sqrt(dot(u, u, k));
+        if (norm > 0.0) {
+            for (std::size_t c = 0; c < k; ++c) u[c] /= norm;
+        }
+    }
+
+    Rng master = make_rng(p.has_seed, p.seed);
+    std::vector<int> best;
+    double best_inertia = std::numeric_limits<double>::infinity();
+    for (std::size_t run = 0; run < p.runs; ++run) {
+        KMeans km;
+        km.clusters = k;
+        km.has_seed = true;
+        km.seed = master();
+        km.fit(U, threads);
+        if (km.inertia < best_inertia) {
+            best_inertia = km.inertia;
+            best = std::move(km.labels);
+        }
+    }
+    return best;
 }
 
 }  // namespace mlcore

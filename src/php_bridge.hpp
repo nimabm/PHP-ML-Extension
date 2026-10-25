@@ -46,7 +46,9 @@ extern zend_class_entry *ce_probabilistic;   // ML\Probabilistic: predictProbabi
 extern zend_class_entry *ce_transformer;     // ML\Transformer: transform()
 extern zend_class_entry *ce_stateful;        // ML\Stateful: transformer with fit()
 extern zend_class_entry *ce_ranks_features;  // ML\RanksFeatures: getFeatureImportances()
+extern zend_class_entry *ce_online;          // ML\Online: partialFit()
 extern zend_class_entry *ce_tokenizer;       // ML\Text\Tokenizer: tokenize()
+extern zend_class_entry *ce_recommender;     // ML\Recommender\Recommender: recommend()
 
 void register_exceptions();
 void register_interfaces();
@@ -75,6 +77,9 @@ void register_text();
 void register_decomposition();
 void register_svm();
 void register_neuralnet();
+void register_manifold();
+void register_sequence();
+void register_recommender();
 
 // Thrown after a call back into PHP left an exception pending; guard() then
 // lets that PHP exception propagate unchanged.

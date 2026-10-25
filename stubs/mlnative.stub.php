@@ -1,7 +1,7 @@
 <?php
 
 /**
- * IDE stub for the mlnative extension (version 0.1.2). Not loaded at runtime:
+ * IDE stub for the mlnative extension (version 0.1.3). Not loaded at runtime:
  * the classes are implemented in C++ (src/). Keep in sync with the arginfo in
  * src/ and with docs/DOCUMENTATION.md.
  *
@@ -22,6 +22,8 @@ namespace ML {
     interface Transformer {}
     interface Stateful {}
     interface RanksFeatures {}
+    /** Learners that can also train incrementally with partialFit(). */
+    interface Online {}
 
     final class Metrics
     {
@@ -39,6 +41,14 @@ namespace ML {
         public static function brierScore(array $expected, array $probabilities): float {}
         public static function probabilisticAccuracy(array $expected, array $probabilities): float {}
         public static function topKAccuracy(array $expected, array $probabilities, int $k = 3): float {}
+        /**
+         * Ranking metrics for recommendations. $recommended is a ranked list of items and
+         * $relevant the items that are relevant, or a list of such lists (one per user,
+         * averaged; users without relevant items are skipped).
+         */
+        public static function precisionAtK(array $recommended, array $relevant, int $k = 10): float {}
+        public static function recallAtK(array $recommended, array $relevant, int $k = 10): float {}
+        public static function ndcgAtK(array $recommended, array $relevant, int $k = 10): float {}
         public static function meanSquaredError(array $expected, array $predicted): float {}
         public static function meanAbsoluteError(array $expected, array $predicted): float {}
         public static function rootMeanSquaredError(array $expected, array $predicted): float {}
@@ -65,6 +75,8 @@ namespace ML {
         public static function swissRoll(float $x = 0.0, float $y = 0.0, float $z = 0.0, float $scale = 1.0, float $depth = 21.0, float $noise = 0.1, int $n = 100, ?int $seed = null): array {}
         /** @return array{samples: list<list<float>>, targets: list<float>} */
         public static function hyperplane(array $coefficients, float $intercept = 0.0, float $noise = 0.1, int $n = 100, ?int $seed = null): array {}
+        /** @return list<array{0: int, 1: int, 2: int}> [user, item, rating 1-5] triples */
+        public static function ratings(int $users = 100, int $items = 50, float $density = 0.2, int $factors = 2, float $noise = 0.5, ?int $seed = null): array {}
         /** @param array<int|string, list<array>> $groups label => samples @return array{samples: list<array>, labels: list<int|string>} */
         public static function agglomerate(array $groups, bool $shuffle = true, ?int $seed = null): array {}
         /** @return array{0: list<array>, 1: list<array>, 2: list, 3: list} [trainSamples, testSamples, trainTargets, testTargets] */
@@ -444,6 +456,29 @@ namespace ML\Clustering {
         public function __construct(int $clusters = 2) {}
         public function predict(array $samples): array {}
     }
+
+    final class MiniBatchKMeans implements \ML\Learner, \ML\Online, \ML\Clusterer, \ML\Probabilistic
+    {
+        /** @param string $seeder plusplus, random, kmc2 or preset @param list<array>|null $centroids preset initial centroids */
+        public function __construct(int $clusters = 8, int $batchSize = 256, int $maxIterations = 100, float $tolerance = 1.0E-4, ?int $seed = null, string $seeder = 'plusplus', ?array $centroids = null) {}
+        public function fit(array $samples): static {}
+        /** Updates the centroids with one more batch (the first call also initializes them). */
+        public function partialFit(array $samples): static {}
+        public function predict(array $samples): array|int {}
+        public function predictProbability(array $samples): array {}
+        public function getCentroids(): array {}
+        /** Clusters of the samples of the last fit() or partialFit() call. */
+        public function getLabels(): array {}
+        public function getInertia(): float {}
+        public function getIterations(): int {}
+    }
+
+    final class SpectralClustering implements \ML\Clusterer
+    {
+        /** @param string $affinity rbf or nearest */
+        public function __construct(int $clusters = 8, string $affinity = 'rbf', float $gamma = 1.0, int $neighbors = 10, int $runs = 10, ?int $seed = null) {}
+        public function predict(array $samples): array {}
+    }
 }
 
 namespace ML\AnomalyDetection {
@@ -778,6 +813,165 @@ namespace ML\Preprocessing {
         public function transform(array $samples): array {}
         public function fitTransform(array $samples): array {}
         public function getLosses(): array {}
+    }
+
+    final class KernelPCA implements \ML\Transformer, \ML\Stateful
+    {
+        /** @param string $kernel linear, polynomial, rbf or sigmoid @param float|null $gamma null = 1 / features */
+        public function __construct(int $dimensions = 2, string $kernel = 'rbf', ?float $gamma = null, int $degree = 3, float $coef0 = 1.0) {}
+        public function fit(array $samples): static {}
+        public function transform(array $samples): array {}
+        public function fitTransform(array $samples): array {}
+        public function getEigenvalues(): array {}
+    }
+
+    final class FastICA implements \ML\Transformer, \ML\Stateful
+    {
+        /** @param int|null $dimensions null = one component per feature @param string $contrast logcosh, exp or cube */
+        public function __construct(?int $dimensions = null, string $contrast = 'logcosh', int $maxIterations = 200, float $tolerance = 1.0E-4, ?int $seed = null) {}
+        public function fit(array $samples): static {}
+        public function transform(array $samples): array {}
+        public function fitTransform(array $samples): array {}
+        /** Unmixing matrix, one row per component. */
+        public function getComponents(): array {}
+        /** Mixing matrix (features x components): x ~ mean + mixing * s. */
+        public function getMixingMatrix(): array {}
+        public function getIterations(): int {}
+    }
+
+    final class NMF implements \ML\Transformer, \ML\Stateful
+    {
+        public function __construct(int $dimensions = 2, int $maxIterations = 200, float $tolerance = 1.0E-4, ?int $seed = null) {}
+        public function fit(array $samples): static {}
+        public function transform(array $samples): array {}
+        /** Returns the coefficients W found while fitting. */
+        public function fitTransform(array $samples): array {}
+        /** H: one non-negative row per component. */
+        public function getComponents(): array {}
+        public function getReconstructionError(): float {}
+        public function getIterations(): int {}
+    }
+
+    final class Isomap implements \ML\Transformer, \ML\Stateful
+    {
+        public function __construct(int $dimensions = 2, int $neighbors = 5, string $metric = 'euclidean') {}
+        public function fit(array $samples): static {}
+        public function transform(array $samples): array {}
+        public function fitTransform(array $samples): array {}
+        public function getEigenvalues(): array {}
+    }
+
+    final class UMAP implements \ML\Transformer, \ML\Stateful
+    {
+        /** @param int|null $epochs null = 500 up to 10,000 samples, else 200 @param string $init pca or random */
+        public function __construct(int $dimensions = 2, int $neighbors = 15, float $minDistance = 0.1, float $spread = 1.0, ?int $epochs = null, float $rate = 1.0, int $negativeSamples = 5, float $repulsion = 1.0, string $init = 'pca', string $metric = 'euclidean', ?int $seed = null) {}
+        public function fit(array $samples): static {}
+        /** Places new samples against the fixed training embedding. */
+        public function transform(array $samples): array {}
+        /** Returns the training embedding itself. */
+        public function fitTransform(array $samples): array {}
+        public function getEmbedding(): array {}
+    }
+}
+
+namespace ML\Sequence {
+    /**
+     * Hidden Markov model over discrete symbols (int|string). A sequence is a list of
+     * symbols; methods that take sequences also accept a list of them. Symbols never
+     * seen in training carry no information.
+     */
+    final class HiddenMarkovModel
+    {
+        public function __construct(int $states = 2, int $maxIterations = 100, float $tolerance = 0.001, float $smoothing = 0.01, ?int $seed = null) {}
+        /** Baum-Welch on unlabeled sequences; states are numbered 0 .. states - 1. */
+        public function fit(array $sequences): static {}
+        /** Counts start, transition and emission frequencies; the state labels come from $states. */
+        public function fitLabeled(array $sequences, array $states): static {}
+        /** Most likely state path (Viterbi). */
+        public function predict(array $sequences): array {}
+        /** Posterior state probabilities per step, keyed by state. */
+        public function predictProbability(array $sequences): array {}
+        /** Log-likelihood. */
+        public function score(array $sequences): array|float {}
+        /** @return array{observations: list<int|string>, states: list<int|string>} */
+        public function sample(int $length, ?int $seed = null): array {}
+        public function getStates(): array {}
+        public function getSymbols(): array {}
+        public function getStartProbabilities(): array {}
+        public function getTransitionMatrix(): array {}
+        public function getEmissionProbabilities(): array {}
+        public function getLogLikelihood(): float {}
+        public function getIterations(): int {}
+    }
+
+    /** Hidden Markov model with Gaussian (diagonal) emissions; a sequence is a list of observation vectors. */
+    final class GaussianHMM
+    {
+        public function __construct(int $states = 2, int $maxIterations = 100, float $tolerance = 0.001, float $smoothing = 0.01, float $minVariance = 1.0E-6, ?int $seed = null) {}
+        public function fit(array $sequences): static {}
+        public function fitLabeled(array $sequences, array $states): static {}
+        public function predict(array $sequences): array {}
+        public function predictProbability(array $sequences): array {}
+        public function score(array $sequences): array|float {}
+        /** @return array{observations: list<list<float>>, states: list<int|string>} */
+        public function sample(int $length, ?int $seed = null): array {}
+        public function getStates(): array {}
+        public function getStartProbabilities(): array {}
+        public function getTransitionMatrix(): array {}
+        public function getMeans(): array {}
+        public function getVariances(): array {}
+        public function getLogLikelihood(): float {}
+        public function getIterations(): int {}
+    }
+}
+
+namespace ML\Recommender {
+    /**
+     * Collaborative filtering. fit() takes [user, item] or [user, item, value] rows;
+     * users and items are int|string labels. predict() takes one [user, item] pair or a
+     * list of pairs; unknown users or items fall back to baselines.
+     */
+    interface Recommender {}
+
+    final class MatrixFactorization implements Recommender
+    {
+        public function __construct(int $factors = 10, float $l2 = 0.1, int $epochs = 15, ?int $seed = null) {}
+        public function fit(array $interactions): static {}
+        public function predict(array $pairs): array|float {}
+        /** @return array<int|string, float> item => score, best first */
+        public function recommend(int|string $user, int $n = 10, bool $excludeSeen = true): array {}
+        public function similarItems(int|string $item, int $n = 10): array {}
+        public function getUsers(): array {}
+        public function getItems(): array {}
+        public function getUserFactors(): array {}
+        public function getItemFactors(): array {}
+        /** Training RMSE after each epoch. */
+        public function getLosses(): array {}
+    }
+
+    final class ImplicitALS implements Recommender
+    {
+        public function __construct(int $factors = 10, float $l2 = 0.01, float $alpha = 40.0, int $epochs = 15, ?int $seed = null) {}
+        public function fit(array $interactions): static {}
+        public function predict(array $pairs): array|float {}
+        public function recommend(int|string $user, int $n = 10, bool $excludeSeen = true): array {}
+        public function similarItems(int|string $item, int $n = 10): array {}
+        public function getUsers(): array {}
+        public function getItems(): array {}
+        public function getUserFactors(): array {}
+        public function getItemFactors(): array {}
+    }
+
+    final class KNNRecommender implements Recommender
+    {
+        /** @param string $similarity cosine, pearson or jaccard @param string $basis item or user */
+        public function __construct(int $neighbors = 20, string $similarity = 'cosine', string $basis = 'item', float $shrinkage = 0.0) {}
+        public function fit(array $interactions): static {}
+        public function predict(array $pairs): array|float {}
+        public function recommend(int|string $user, int $n = 10, bool $excludeSeen = true): array {}
+        public function similarItems(int|string $item, int $n = 10): array {}
+        public function getUsers(): array {}
+        public function getItems(): array {}
     }
 }
 

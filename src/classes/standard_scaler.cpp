@@ -1,126 +1,72 @@
-#include "arginfo.hpp"
+// ML\Preprocessing\StandardScaler. Serializes to the PHP array format of 0.1.0.
+
+#include "binding.hpp"
 #include "core/standard_scaler.hpp"
 
 namespace {
 
-using mlphp::guard;
-using Model = mlcore::StandardScaler;
+using namespace mlphp;
 
-// Standardizes `samples` (a list of samples or a single one) into return_value.
-void transform_into(const Model &m, HashTable *samples, zval *return_value) {
-    if (mlphp::is_sample_list(samples)) {
-        mlcore::Matrix X = mlphp::read_samples(samples, m.features());
-        for (std::size_t r = 0; r < X.rows; ++r) {
-            m.transform(X.row(r));
-        }
-        mlphp::write_matrix(return_value, X);
-    } else {
-        std::vector<double> x = mlphp::read_sample(samples, m.features());
-        m.transform(x.data());
-        mlphp::write_doubles(return_value, x);
+struct Model {
+    mlcore::StandardScaler core;
+    bool fitted() const { return core.fitted(); }
+    std::size_t features() const { return core.features(); }
+    std::size_t output_dim() const { return core.features(); }
+    void fit(const mlcore::Matrix &X, unsigned) { core.fit(X); }
+    void transform_row(const double *in, double *out) const {
+        std::copy(in, in + core.features(), out);
+        core.transform(out);
     }
-}
+};
 
-PHP_METHOD(StandardScaler, fit) {
-    HashTable *samples;
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_ARRAY_HT(samples)
-    ZEND_PARSE_PARAMETERS_END();
-
-    if (!guard([&] { mlphp::native<Model>(ZEND_THIS).fit(mlphp::read_samples(samples)); })) {
-        RETURN_THROWS();
-    }
-    RETURN_OBJ_COPY(Z_OBJ_P(ZEND_THIS));
-}
-
-PHP_METHOD(StandardScaler, transform) {
-    HashTable *samples;
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_ARRAY_HT(samples)
-    ZEND_PARSE_PARAMETERS_END();
-
-    guard([&] {
-        const Model &m = mlphp::native<Model>(ZEND_THIS);
-        mlphp::require_fitted(m.fitted(), ZEND_THIS);
-        transform_into(m, samples, return_value);
-    });
-}
-
-PHP_METHOD(StandardScaler, fitTransform) {
-    HashTable *samples;
-    ZEND_PARSE_PARAMETERS_START(1, 1)
-        Z_PARAM_ARRAY_HT(samples)
-    ZEND_PARSE_PARAMETERS_END();
-
-    guard([&] {
-        Model &m = mlphp::native<Model>(ZEND_THIS);
-        mlcore::Matrix X = mlphp::read_samples(samples);
-        m.fit(X);
-        for (std::size_t r = 0; r < X.rows; ++r) {
-            m.transform(X.row(r));
-        }
-        mlphp::write_matrix(return_value, X);
-    });
-}
-
-PHP_METHOD(StandardScaler, getMeans) {
+void ZEND_FASTCALL scaler_means(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    guard([&] {
-        const Model &m = mlphp::native<Model>(ZEND_THIS);
-        mlphp::require_fitted(m.fitted(), ZEND_THIS);
-        mlphp::write_doubles(return_value, m.means);
-    });
+    fitted_getter<Model>(ZEND_THIS, return_value, [](const Model &m, zval *out) { write_doubles(out, m.core.means); });
 }
 
-PHP_METHOD(StandardScaler, getScales) {
+void ZEND_FASTCALL scaler_scales(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    guard([&] {
-        const Model &m = mlphp::native<Model>(ZEND_THIS);
-        mlphp::require_fitted(m.fitted(), ZEND_THIS);
-        mlphp::write_doubles(return_value, m.scales);
-    });
+    fitted_getter<Model>(ZEND_THIS, return_value, [](const Model &m, zval *out) { write_doubles(out, m.core.scales); });
 }
 
-PHP_METHOD(StandardScaler, __serialize) {
+void ZEND_FASTCALL scaler_serialize(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    const Model &m = mlphp::native<Model>(ZEND_THIS);
+    const Model &m = native<Model>(ZEND_THIS);
     array_init(return_value);
-    mlphp::put_doubles(return_value, "means", m.means);
-    mlphp::put_doubles(return_value, "scales", m.scales);
+    put_doubles(return_value, "means", m.core.means);
+    put_doubles(return_value, "scales", m.core.scales);
 }
 
-PHP_METHOD(StandardScaler, __unserialize) {
+void ZEND_FASTCALL scaler_unserialize(INTERNAL_FUNCTION_PARAMETERS) {
     HashTable *data;
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_ARRAY_HT(data)
     ZEND_PARSE_PARAMETERS_END();
-
     guard([&] {
         Model restored;
-        restored.means = mlphp::get_doubles(data, "means");
-        restored.scales = mlphp::get_doubles(data, "scales");
-        if (restored.means.size() != restored.scales.size()) {
+        restored.core.means = get_doubles(data, "means");
+        restored.core.scales = get_doubles(data, "scales");
+        if (restored.core.means.size() != restored.core.scales.size()) {
             throw std::invalid_argument("Invalid serialized data: inconsistent StandardScaler state");
         }
-        for (double s : restored.scales) {
+        for (double s : restored.core.scales) {
             if (s == 0.0) {
                 throw std::invalid_argument("Invalid serialized data: scales must be non-zero");
             }
         }
-        mlphp::native<Model>(ZEND_THIS) = std::move(restored);
+        reset(ZEND_THIS, std::move(restored));
     });
 }
 
 const zend_function_entry methods[] = {
-    PHP_ME(StandardScaler, fit, arginfo_ml_fit_unsupervised, ZEND_ACC_PUBLIC)
-    PHP_ME(StandardScaler, transform, arginfo_ml_samples_to_array, ZEND_ACC_PUBLIC)
-    PHP_ME(StandardScaler, fitTransform, arginfo_ml_samples_to_array, ZEND_ACC_PUBLIC)
-    PHP_ME(StandardScaler, getMeans, arginfo_ml_get_array, ZEND_ACC_PUBLIC)
-    PHP_ME(StandardScaler, getScales, arginfo_ml_get_array, ZEND_ACC_PUBLIC)
-    PHP_ME(StandardScaler, __serialize, arginfo_ml_get_array, ZEND_ACC_PUBLIC)
-    PHP_ME(StandardScaler, __unserialize, arginfo_ml_unserialize, ZEND_ACC_PUBLIC)
-    PHP_FE_END
-};
+    ML_METHOD(fit, fit_unsupervised<Model>, arginfo_ml_fit_unsupervised)
+    ML_METHOD(transform, transform<Model>, arginfo_ml_samples_to_array)
+    ML_METHOD(fitTransform, fit_transform<Model>, arginfo_ml_samples_to_array)
+    ML_METHOD(getMeans, scaler_means, arginfo_ml_get_array)
+    ML_METHOD(getScales, scaler_scales, arginfo_ml_get_array)
+    ML_METHOD(__serialize, scaler_serialize, arginfo_ml_get_array)
+    ML_METHOD(__unserialize, scaler_unserialize, arginfo_ml_unserialize)
+    PHP_FE_END};
 
 }  // namespace
 

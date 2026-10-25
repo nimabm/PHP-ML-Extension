@@ -128,7 +128,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_grid_construct, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, class, IS_STRING, 0)
     ZEND_ARG_TYPE_INFO(0, grid, IS_ARRAY, 0)
     ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, validator, ML\\CrossValidation\\Validator, 1, "null")
-    ZEND_ARG_INFO_WITH_DEFAULT_VALUE(0, metric, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, metric, IS_MIXED, 1, "null")
 ZEND_END_ARG_INFO()
 
 void ZEND_FASTCALL grid_construct(INTERNAL_FUNCTION_PARAMETERS) {
@@ -385,7 +385,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_bayes_construct, 0, 0, 2)
     ZEND_ARG_TYPE_INFO(0, space, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, trials, IS_LONG, 0, "10")
     ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, validator, ML\\CrossValidation\\Validator, 1, "null")
-    ZEND_ARG_INFO_WITH_DEFAULT_VALUE(0, metric, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, metric, IS_MIXED, 1, "null")
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
 ZEND_END_ARG_INFO()
 
