@@ -5,7 +5,8 @@
 namespace mlcore {
 
 // Multinomial (softmax) logistic regression trained with full-batch gradient
-// descent. Binary problems are the two-class case of the same model.
+// descent. Binary problems are the two-class case of the same model, trained
+// through an equivalent single sigmoid for speed.
 class LogisticRegression {
 public:
     double learning_rate = 0.1;

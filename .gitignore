@@ -45,3 +45,7 @@ tests/*.sh
 # docker build --target artifact output
 out/
 dist/
+
+# cross-language benchmark: generated data and results
+benchmarks/cross-language/data/
+benchmarks/cross-language/results.txt

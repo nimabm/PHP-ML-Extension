@@ -9,6 +9,9 @@ declare(strict_types=1);
 use ML\Classification\KNearestNeighbors;
 use ML\Classification\LogisticRegression;
 use ML\Regression\LinearRegression;
+use ML\Classification\RandomForest;
+use ML\Clustering\KMeans;
+use ML\AnomalyDetection\IsolationForest;
 
 mt_srand(1);
 
@@ -126,6 +129,41 @@ function php_linear_fit(array $X, array $y): array
     return $w;
 }
 
+function php_kmeans(array $X, array $centroids, int $iterations): array
+{
+    $k = count($centroids);
+    $d = count($X[0]);
+    for ($it = 0; $it < $iterations; $it++) {
+        $sums = array_fill(0, $k, array_fill(0, $d, 0.0));
+        $counts = array_fill(0, $k, 0);
+        foreach ($X as $x) {
+            $best = 0;
+            $bestDist = INF;
+            foreach ($centroids as $c => $center) {
+                $dist = 0.0;
+                foreach ($x as $j => $v) {
+                    $diff = $v - $center[$j];
+                    $dist += $diff * $diff;
+                }
+                if ($dist < $bestDist) {
+                    $bestDist = $dist;
+                    $best = $c;
+                }
+            }
+            $counts[$best]++;
+            foreach ($x as $j => $v) {
+                $sums[$best][$j] += $v;
+            }
+        }
+        foreach ($centroids as $c => $_) {
+            if ($counts[$c] > 0) {
+                $centroids[$c] = array_map(fn ($s) => $s / $counts[$c], $sums[$c]);
+            }
+        }
+    }
+    return $centroids;
+}
+
 // ---- runs --------------------------------------------------------------------
 
 $results = [];
@@ -147,8 +185,34 @@ $results[] = ['LogisticRegression: 200 epochs on 3000x16', $php, $native];
 [, $native] = timed(fn () => (new LinearRegression())->fit($Xl, $yl));
 $results[] = ['LinearRegression: fit 20000x32', $php, $native];
 
+[$Xk] = dataset(5000, 8);
+$seeds = array_slice($Xk, 0, 4);
+[, $php] = timed(fn () => php_kmeans($Xk, $seeds, 20));
+[, $native] = timed(fn () => (new KMeans(4, 20, 0.0, centroids: $seeds))->fit($Xk));
+$results[] = ['KMeans: 5000x8, 4 clusters, 20 iterations', $php, $native];
+
 printf("PHP %s, mlnative %s\n\n", PHP_VERSION, phpversion('mlnative'));
 printf("%-44s %12s %12s %9s\n", 'benchmark', 'pure PHP', 'mlnative', 'speedup');
 foreach ($results as [$name, $php, $native]) {
     printf("%-44s %9.1f ms %9.1f ms %8.1fx\n", $name, $php, $native, $php / $native);
 }
+
+// ---- multithreading (mlnative.threads) ------------------------------------------
+
+$cores = (int) (getenv('BENCH_THREADS') ?: 4);
+$threaded = [];
+$threaded[] = ['RandomForest: 200 trees on 3000x16', fn () => (new RandomForest(200, seed: 1))->fit($X, $labels)];
+$knn = (new KNearestNeighbors(5))->fit($X, $labels);
+[$many] = dataset(3000, 16);
+$threaded[] = ['KNN: predict 3000 samples', fn () => $knn->predict($many)];
+$threaded[] = ['IsolationForest: 300 trees on 3000x16', fn () => (new IsolationForest(300, seed: 1))->fit($X)];
+
+printf("\n%-44s %12s %12s %9s\n", 'multithreading', '1 thread', "$cores threads", 'speedup');
+foreach ($threaded as [$name, $fn]) {
+    ini_set('mlnative.threads', '1');
+    [, $one] = timed($fn);
+    ini_set('mlnative.threads', (string) $cores);
+    [, $many_time] = timed($fn);
+    printf("%-44s %9.1f ms %9.1f ms %8.1fx\n", $name, $one, $many_time, $one / $many_time);
+}
+ini_set('mlnative.threads', '1');

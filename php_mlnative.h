@@ -4,7 +4,7 @@
 extern zend_module_entry mlnative_module_entry;
 #define phpext_mlnative_ptr &mlnative_module_entry
 
-#define PHP_MLNATIVE_VERSION "0.1.0"
+#define PHP_MLNATIVE_VERSION "0.1.2"
 
 #if defined(ZTS) && defined(COMPILE_DL_MLNATIVE)
 ZEND_TSRMLS_CACHE_EXTERN()

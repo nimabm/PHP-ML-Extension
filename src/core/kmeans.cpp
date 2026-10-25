@@ -57,6 +57,25 @@ Matrix init_plus_plus(const Matrix &X, std::size_t k, std::mt19937_64 &rng) {
 
 }  // namespace
 
+void KMeans::probabilities(const double *x, double *out) const {
+    // Membership proportional to inverse distance; an exact hit takes it all.
+    const std::size_t k = centroids.rows;
+    double total = 0.0;
+    for (std::size_t c = 0; c < k; ++c) {
+        const double dist = std::sqrt(squared_distance(x, centroids.row(c), centroids.cols));
+        if (dist == 0.0) {
+            std::fill(out, out + k, 0.0);
+            out[c] = 1.0;
+            return;
+        }
+        out[c] = 1.0 / dist;
+        total += out[c];
+    }
+    for (std::size_t c = 0; c < k; ++c) {
+        out[c] /= total;
+    }
+}
+
 int KMeans::predict_one(const double *x, double *distance) const {
     std::size_t best = 0;
     double best_dist = std::numeric_limits<double>::infinity();
@@ -87,7 +106,8 @@ void KMeans::fit(const Matrix &X) {
 
     // Work on a copy so a failed fit leaves the previous model intact.
     KMeans next = *this;
-    next.centroids = init_plus_plus(X, k, rng);
+    // k-means++ keeps its original implementation so seeded results match 0.1.x.
+    next.centroids = seeder == Seeder::PlusPlus ? init_plus_plus(X, k, rng) : seed_centers(X, k, seeder, preset, Distance(), rng);
     next.labels.assign(n, 0);
     next.iterations = 0;
 

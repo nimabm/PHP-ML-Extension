@@ -187,5 +187,5 @@ const zend_function_entry methods[] = {
 }  // namespace
 
 void mlphp::register_logistic_regression() {
-    register_class<Model>("ML\\Classification\\LogisticRegression", methods);
+    register_class<Model>("ML\\Classification\\LogisticRegression", methods, {ce_learner, ce_classifier, ce_probabilistic});
 }

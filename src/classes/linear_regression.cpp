@@ -127,5 +127,5 @@ const zend_function_entry methods[] = {
 }  // namespace
 
 void mlphp::register_linear_regression() {
-    register_class<Model>("ML\\Regression\\LinearRegression", methods);
+    register_class<Model>("ML\\Regression\\LinearRegression", methods, {ce_learner, ce_regressor});
 }

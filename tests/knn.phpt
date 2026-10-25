@@ -26,7 +26,7 @@ try {
     echo $e->getMessage(), "\n";
 }
 try {
-    new KNearestNeighbors(3, 'cosine');
+    new KNearestNeighbors(3, 'bogus');
 } catch (ML\Exception\InvalidArgumentException $e) {
     echo $e->getMessage(), "\n";
 }
@@ -56,7 +56,7 @@ string(4) "blue"
 ab
 --- errors
 k (10) cannot exceed the number of training samples (6)
-metric must be "euclidean" or "manhattan", "cosine" given
+Unknown distance metric "bogus"; expected euclidean, squared_euclidean, manhattan, chebyshev, minkowski, minkowski(<p>), cosine, canberra, hamming, jaccard or safe_euclidean
 k must be at least 1
 --- serialize
 bool(true)
