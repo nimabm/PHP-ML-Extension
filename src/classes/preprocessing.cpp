@@ -176,9 +176,7 @@ void ZEND_FASTCALL stateless_transform(INTERNAL_FUNCTION_PARAMETERS) {
         if (is_sample_list(samples)) {
             const mlcore::Matrix X = read_samples(samples);
             mlcore::Matrix Y(X.rows, m.output_dim(X.cols));
-            for (std::size_t r = 0; r < X.rows; ++r) {
-                m.transform_row(X.row(r), X.cols, Y.row(r));
-            }
+            mlcore::parallel_for(X.rows, threads(), [&](std::size_t r) { m.transform_row(X.row(r), X.cols, Y.row(r)); });
             write_matrix(return_value, Y);
         } else {
             const std::vector<double> x = read_sample(samples, zend_hash_num_elements(samples));

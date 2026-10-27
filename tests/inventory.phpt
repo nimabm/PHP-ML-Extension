@@ -6,7 +6,7 @@ Inventory of every ML\ class and interface, and the interfaces each implements
 $names = array_filter(array_merge(get_declared_classes(), get_declared_interfaces()), fn ($n) => str_starts_with($n, 'ML\\'));
 sort($names);
 $markers = ['ML\Learner', 'ML\Estimator', 'ML\Classifier', 'ML\Regressor', 'ML\Clusterer', 'ML\AnomalyDetector',
-    'ML\Probabilistic', 'ML\Transformer', 'ML\Stateful', 'ML\RanksFeatures'];
+    'ML\Probabilistic', 'ML\Transformer', 'ML\Stateful', 'ML\RanksFeatures', 'ML\Online', 'ML\Recommender\Recommender'];
 foreach ($names as $name) {
     $r = new ReflectionClass($name);
     if ($r->isInterface()) {
@@ -49,7 +49,9 @@ ML\Clustering\GaussianMixture [Clusterer, Estimator, Learner, Probabilistic]
 ML\Clustering\KMeans [Clusterer, Estimator, Learner, Probabilistic]
 ML\Clustering\KMedoids [Clusterer, Estimator, Learner]
 ML\Clustering\MeanShift [Clusterer, Estimator, Learner]
+ML\Clustering\MiniBatchKMeans [Clusterer, Estimator, Learner, Online, Probabilistic]
 ML\Clustering\OPTICS [Clusterer, Estimator]
+ML\Clustering\SpectralClustering [Clusterer, Estimator]
 ML\Clustering\Ward [Clusterer, Estimator]
 ML\CrossValidation\HoldOut
 ML\CrossValidation\KFold
@@ -92,12 +94,16 @@ ML\NeuralNet\Schedules\Cosine
 ML\NeuralNet\Schedules\Cyclical
 ML\NeuralNet\Schedules\Ramp
 ML\NeuralNet\Schedules\StepDecay
+interface ML\Online
 ML\Pipeline [Estimator, Learner]
 ML\Preprocessing\BooleanConverter [Transformer]
+ML\Preprocessing\FastICA [Stateful, Transformer]
 ML\Preprocessing\GaussianRandomProjector [Stateful, Transformer]
 ML\Preprocessing\HotDeckImputer [Stateful, Transformer]
 ML\Preprocessing\IntervalDiscretizer [Stateful, Transformer]
+ML\Preprocessing\Isomap [Stateful, Transformer]
 ML\Preprocessing\KNNImputer [Stateful, Transformer]
+ML\Preprocessing\KernelPCA [Stateful, Transformer]
 ML\Preprocessing\L1Normalizer [Transformer]
 ML\Preprocessing\L2Normalizer [Transformer]
 ML\Preprocessing\LambdaFunction [Transformer]
@@ -105,6 +111,7 @@ ML\Preprocessing\LinearDiscriminantAnalysis [Stateful, Transformer]
 ML\Preprocessing\MaxAbsoluteScaler [Stateful, Transformer]
 ML\Preprocessing\MinMaxNormalizer [Stateful, Transformer]
 ML\Preprocessing\MissingDataImputer [Stateful, Transformer]
+ML\Preprocessing\NMF [Stateful, Transformer]
 ML\Preprocessing\NumericStringConverter [Transformer]
 ML\Preprocessing\OneHotEncoder [Stateful, Transformer]
 ML\Preprocessing\PCA [Stateful, Transformer]
@@ -115,8 +122,13 @@ ML\Preprocessing\SparseRandomProjector [Stateful, Transformer]
 ML\Preprocessing\StandardScaler [Stateful, Transformer]
 ML\Preprocessing\TSNE [Transformer]
 ML\Preprocessing\TruncatedSVD [Stateful, Transformer]
+ML\Preprocessing\UMAP [Stateful, Transformer]
 interface ML\Probabilistic
 interface ML\RanksFeatures
+ML\Recommender\ImplicitALS [Recommender\Recommender]
+ML\Recommender\KNNRecommender [Recommender\Recommender]
+ML\Recommender\MatrixFactorization [Recommender\Recommender]
+interface ML\Recommender\Recommender
 ML\Regression\Adaline [Estimator, Learner, Regressor]
 ML\Regression\ElasticNet [Estimator, Learner, Regressor]
 ML\Regression\ExtraTreeRegressor [Estimator, Learner, RanksFeatures, Regressor]
@@ -130,6 +142,8 @@ ML\Regression\RandomForestRegressor [Estimator, Learner, RanksFeatures, Regresso
 ML\Regression\RegressionTree [Estimator, Learner, RanksFeatures, Regressor]
 ML\Regression\SVR [Estimator, Learner, Regressor]
 interface ML\Regressor
+ML\Sequence\GaussianHMM
+ML\Sequence\HiddenMarkovModel
 interface ML\Stateful
 ML\Text\BM25Transformer [Stateful, Transformer]
 ML\Text\KSkipNGramTokenizer
@@ -148,4 +162,4 @@ ML\Text\WordCountVectorizer [Stateful, Transformer]
 ML\Text\WordStemmer
 ML\Text\WordTokenizer
 interface ML\Transformer
-128 names
+142 names

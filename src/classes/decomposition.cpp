@@ -1,5 +1,5 @@
 // Dimensionality reduction: PCA, TruncatedSVD, LinearDiscriminantAnalysis,
-// GaussianRandomProjector, SparseRandomProjector and TSNE.
+// FastICA, NMF, GaussianRandomProjector, SparseRandomProjector and TSNE.
 
 #include "binding.hpp"
 #include "core/decomposition.hpp"
@@ -79,42 +79,34 @@ void write_components(zval *out, const mlcore::Matrix &W) {
     write_matrix(out, T);
 }
 
-template <typename M, typename F>
-void fitted_getter(zval *self, F f) {
-    guard([&] {
-        const M &m = native<M>(self);
-        require_fitted(m.fitted(), self);
-        f(m);
-    });
-}
-
 void ZEND_FASTCALL pca_variance(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<PCAModel>(ZEND_THIS, [&](const PCAModel &m) { write_doubles(return_value, m.core.explained); });
+    fitted_getter<PCAModel>(ZEND_THIS, return_value, [](const PCAModel &m, zval *out) { write_doubles(out, m.core.explained); });
 }
 void ZEND_FASTCALL pca_ratio(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<PCAModel>(ZEND_THIS, [&](const PCAModel &m) { write_ratio(return_value, m.core.explained, m.core.total_variance); });
+    fitted_getter<PCAModel>(ZEND_THIS, return_value,
+                            [](const PCAModel &m, zval *out) { write_ratio(out, m.core.explained, m.core.total_variance); });
 }
 void ZEND_FASTCALL pca_components(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<PCAModel>(ZEND_THIS, [&](const PCAModel &m) { write_components(return_value, m.core.projection.W); });
+    fitted_getter<PCAModel>(ZEND_THIS, return_value, [](const PCAModel &m, zval *out) { write_components(out, m.core.projection.W); });
 }
 void ZEND_FASTCALL svd_values(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<SVDModel>(ZEND_THIS, [&](const SVDModel &m) { write_doubles(return_value, m.core.singular_values); });
+    fitted_getter<SVDModel>(ZEND_THIS, return_value, [](const SVDModel &m, zval *out) { write_doubles(out, m.core.singular_values); });
 }
 void ZEND_FASTCALL svd_ratio(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<SVDModel>(ZEND_THIS, [&](const SVDModel &m) {
+    fitted_getter<SVDModel>(ZEND_THIS, return_value, [](const SVDModel &m, zval *out) {
         std::vector<double> squares;
         for (double s : m.core.singular_values) squares.push_back(s * s);
-        write_ratio(return_value, squares, m.core.total);
+        write_ratio(out, squares, m.core.total);
     });
 }
 void ZEND_FASTCALL svd_components(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<SVDModel>(ZEND_THIS, [&](const SVDModel &m) { write_components(return_value, m.core.projection.W); });
+    fitted_getter<SVDModel>(ZEND_THIS, return_value, [](const SVDModel &m, zval *out) { write_components(out, m.core.projection.W); });
 }
 
 #define ML_PROJECTOR(M)                                                            \
@@ -144,6 +136,11 @@ const zend_function_entry svd_methods[] = {
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_lda_construct, 0, 0, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dimensions, IS_LONG, 0, "1")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_lda_fit, 0, 2, MAY_BE_STATIC)
+    ZEND_ARG_TYPE_INFO(0, samples, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, labels, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_lda_fit_transform, 0, 2, IS_ARRAY, 0)
@@ -200,21 +197,19 @@ void ZEND_FASTCALL lda_fit_transform(INTERNAL_FUNCTION_PARAMETERS) {
         lda_train(ZEND_THIS, samples, labels, &X);
         const LDAModel &m = native<LDAModel>(ZEND_THIS);
         mlcore::Matrix Y(X.rows, m.output_dim());
-        for (std::size_t r = 0; r < X.rows; ++r) {
-            m.transform_row(X.row(r), Y.row(r));
-        }
+        mlcore::parallel_for(X.rows, threads(), [&](std::size_t r) { m.transform_row(X.row(r), Y.row(r)); });
         write_matrix(return_value, Y);
     });
 }
 
 void ZEND_FASTCALL lda_variance(INTERNAL_FUNCTION_PARAMETERS) {
     ZEND_PARSE_PARAMETERS_NONE();
-    fitted_getter<LDAModel>(ZEND_THIS, [&](const LDAModel &m) { write_doubles(return_value, m.core.explained); });
+    fitted_getter<LDAModel>(ZEND_THIS, return_value, [](const LDAModel &m, zval *out) { write_doubles(out, m.core.explained); });
 }
 
 const zend_function_entry lda_methods[] = {
     ML_METHOD(__construct, lda_construct, arginfo_lda_construct)
-    ML_METHOD(fit, lda_fit, arginfo_ml_fit_supervised)
+    ML_METHOD(fit, lda_fit, arginfo_lda_fit)
     ML_METHOD(transform, transform<LDAModel>, arginfo_ml_samples_to_array)
     ML_METHOD(fitTransform, lda_fit_transform, arginfo_lda_fit_transform)
     ML_METHOD(getExplainedVariance, lda_variance, arginfo_ml_get_array)
@@ -240,8 +235,7 @@ void ZEND_FASTCALL gaussian_projector_construct(INTERNAL_FUNCTION_PARAMETERS) {
     guard([&] {
         GaussianProjector fresh;
         fresh.core.dimensions = positive(dimensions, "dimensions");
-        fresh.core.has_seed = !seed_null;
-        fresh.core.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -268,8 +262,7 @@ void ZEND_FASTCALL sparse_projector_construct(INTERNAL_FUNCTION_PARAMETERS) {
         check(sparsity >= 1.0 && std::isfinite(sparsity), "sparsity must be at least 1");
         fresh.core.sparse = true;
         fresh.core.sparsity = sparsity;
-        fresh.core.has_seed = !seed_null;
-        fresh.core.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -293,7 +286,6 @@ void ZEND_FASTCALL projector_min_dimensions(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
-#define ML_STATIC(name, handler, arginfo) ZEND_FENTRY(name, (handler), arginfo, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
 
 const zend_function_entry gaussian_projector_methods[] = {
     ML_METHOD(__construct, gaussian_projector_construct, arginfo_gaussian_projector_construct)
@@ -305,6 +297,157 @@ const zend_function_entry sparse_projector_methods[] = {
     ML_METHOD(__construct, sparse_projector_construct, arginfo_sparse_projector_construct)
     ML_PROJECTOR(SparseProjector)
     ML_STATIC(minDimensions, projector_min_dimensions, arginfo_min_dimensions)
+    PHP_FE_END};
+
+// ---- FastICA ------------------------------------------------------------------------------------
+
+struct ICAModel {
+    static constexpr std::uint32_t kTag = mlcore::tag("FICA");
+    mlcore::FastICA core;
+    bool fitted() const { return core.projection.W.rows > 0; }
+    std::size_t features() const { return core.projection.input_dim(); }
+    std::size_t output_dim() const { return core.projection.output_dim(); }
+    void transform_row(const double *in, double *out) const { core.projection.transform(in, out); }
+    void fit(const mlcore::Matrix &X, unsigned threads) { core.fit(X, threads); }
+    void save(ArchiveWriter &w) const { core.save(w); }
+    void load(ArchiveReader &r) { core.load(r); }
+};
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_ica_construct, 0, 0, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dimensions, IS_LONG, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, contrast, IS_STRING, 0, "\"logcosh\"")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxIterations, IS_LONG, 0, "200")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tolerance, IS_DOUBLE, 0, "1.0E-4")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+void ZEND_FASTCALL ica_construct(INTERNAL_FUNCTION_PARAMETERS) {
+    zend_long dimensions = 0, max_iterations = 200, seed = 0;
+    bool dimensions_null = true, seed_null = true;
+    zend_string *contrast = nullptr;
+    double tolerance = 1e-4;
+    ZEND_PARSE_PARAMETERS_START(0, 5)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG_OR_NULL(dimensions, dimensions_null)
+        Z_PARAM_STR(contrast)
+        Z_PARAM_LONG(max_iterations)
+        Z_PARAM_DOUBLE(tolerance)
+        Z_PARAM_LONG_OR_NULL(seed, seed_null)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        ICAModel fresh;
+        fresh.core.dimensions = dimensions_null ? 0 : positive(dimensions, "dimensions");
+        if (contrast) {
+            fresh.core.contrast = mlcore::FastICA::parse(zstr(contrast));
+        }
+        fresh.core.max_iterations = static_cast<long>(positive(max_iterations, "maxIterations"));
+        fresh.core.tolerance = strictly_positive(tolerance, "tolerance");
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
+        reset(ZEND_THIS, std::move(fresh));
+    });
+}
+
+void ZEND_FASTCALL ica_components(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<ICAModel>(ZEND_THIS, return_value, [](const ICAModel &m, zval *out) { write_components(out, m.core.projection.W); });
+}
+void ZEND_FASTCALL ica_mixing(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<ICAModel>(ZEND_THIS, return_value, [](const ICAModel &m, zval *out) { write_matrix(out, m.core.mixing); });
+}
+void ZEND_FASTCALL ica_iterations(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<ICAModel>(ZEND_THIS, return_value, [](const ICAModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
+}
+
+const zend_function_entry ica_methods[] = {
+    ML_METHOD(__construct, ica_construct, arginfo_ica_construct)
+    ML_PROJECTOR(ICAModel)
+    ML_METHOD(getComponents, ica_components, arginfo_ml_get_array)
+    ML_METHOD(getMixingMatrix, ica_mixing, arginfo_ml_get_array)
+    ML_METHOD(getIterations, ica_iterations, arginfo_ml_get_int)
+    PHP_FE_END};
+
+// ---- NMF --------------------------------------------------------------------------------------
+
+struct NMFModel {
+    static constexpr std::uint32_t kTag = mlcore::tag("NMFX");
+    mlcore::NMF core;
+    bool fitted() const { return core.fitted(); }
+    std::size_t features() const { return core.features(); }
+    std::size_t output_dim() const { return core.components.rows; }
+    void transform_row(const double *in, double *out) const { core.transform(in, out); }
+    void fit(const mlcore::Matrix &X, unsigned threads) { core.fit(X, threads); }
+    void save(ArchiveWriter &w) const { core.save(w); }
+    void load(ArchiveReader &r) { core.load(r); }
+};
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_nmf_construct, 0, 0, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dimensions, IS_LONG, 0, "2")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, maxIterations, IS_LONG, 0, "200")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, tolerance, IS_DOUBLE, 0, "1.0E-4")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+void ZEND_FASTCALL nmf_construct(INTERNAL_FUNCTION_PARAMETERS) {
+    zend_long dimensions = 2, max_iterations = 200, seed = 0;
+    bool seed_null = true;
+    double tolerance = 1e-4;
+    ZEND_PARSE_PARAMETERS_START(0, 4)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(dimensions)
+        Z_PARAM_LONG(max_iterations)
+        Z_PARAM_DOUBLE(tolerance)
+        Z_PARAM_LONG_OR_NULL(seed, seed_null)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        NMFModel fresh;
+        fresh.core.dimensions = positive(dimensions, "dimensions");
+        fresh.core.max_iterations = static_cast<long>(positive(max_iterations, "maxIterations"));
+        fresh.core.tolerance = non_negative(tolerance, "tolerance");
+        parse_seed(seed_null, seed, fresh.core.has_seed, fresh.core.seed);
+        reset(ZEND_THIS, std::move(fresh));
+    });
+}
+
+// Returns the coefficients W found while fitting (transform() would re-solve them).
+void ZEND_FASTCALL nmf_fit_transform(INTERNAL_FUNCTION_PARAMETERS) {
+    HashTable *samples;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY_HT(samples)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        NMFModel &m = native<NMFModel>(ZEND_THIS);
+        NMFModel next = m;
+        const mlcore::Matrix W = next.core.fit(read_samples(samples), threads());
+        m = std::move(next);
+        write_matrix(return_value, W);
+    });
+}
+
+void ZEND_FASTCALL nmf_components(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<NMFModel>(ZEND_THIS, return_value, [](const NMFModel &m, zval *out) { write_matrix(out, m.core.components); });
+}
+void ZEND_FASTCALL nmf_error(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<NMFModel>(ZEND_THIS, return_value, [](const NMFModel &m, zval *out) { ZVAL_DOUBLE(out, m.core.error); });
+}
+void ZEND_FASTCALL nmf_iterations(INTERNAL_FUNCTION_PARAMETERS) {
+    ZEND_PARSE_PARAMETERS_NONE();
+    fitted_getter<NMFModel>(ZEND_THIS, return_value, [](const NMFModel &m, zval *out) { ZVAL_LONG(out, m.core.iterations); });
+}
+
+const zend_function_entry nmf_methods[] = {
+    ML_METHOD(__construct, nmf_construct, arginfo_nmf_construct)
+    ML_METHOD(fit, fit_unsupervised<NMFModel>, arginfo_ml_fit_unsupervised)
+    ML_METHOD(transform, transform<NMFModel>, arginfo_ml_samples_to_array)
+    ML_METHOD(fitTransform, nmf_fit_transform, arginfo_ml_samples_to_array)
+    ML_METHOD(getComponents, nmf_components, arginfo_ml_get_array)
+    ML_METHOD(getReconstructionError, nmf_error, arginfo_ml_get_float)
+    ML_METHOD(getIterations, nmf_iterations, arginfo_ml_get_int)
+    ML_METHOD(__serialize, serialize_native<NMFModel>, arginfo_ml_get_array)
+    ML_METHOD(__unserialize, unserialize_native<NMFModel>, arginfo_ml_unserialize)
     PHP_FE_END};
 
 // ---- TSNE --------------------------------------------------------------------------------------
@@ -350,8 +493,7 @@ void ZEND_FASTCALL tsne_construct(INTERNAL_FUNCTION_PARAMETERS) {
         fresh.params.exaggeration = exaggeration;
         fresh.params.epochs = positive(epochs, "epochs");
         fresh.params.min_gradient = non_negative(min_gradient, "minGradient");
-        fresh.params.has_seed = !seed_null;
-        fresh.params.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.params.has_seed, fresh.params.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -394,4 +536,6 @@ void mlphp::register_decomposition() {
     register_class<GaussianProjector>("ML\\Preprocessing\\GaussianRandomProjector", gaussian_projector_methods, stateful);
     register_class<SparseProjector>("ML\\Preprocessing\\SparseRandomProjector", sparse_projector_methods, stateful);
     register_class<TSNEModel>("ML\\Preprocessing\\TSNE", tsne_methods, {ce_transformer});
+    register_class<ICAModel>("ML\\Preprocessing\\FastICA", ica_methods, stateful);
+    register_class<NMFModel>("ML\\Preprocessing\\NMF", nmf_methods, stateful);
 }

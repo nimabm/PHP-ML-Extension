@@ -119,4 +119,20 @@ OpticsResult optics(const Matrix &X, std::size_t min_density, double max_radius,
 // Agglomerative clustering with Ward linkage (nearest-neighbor chain).
 std::vector<int> ward(const Matrix &X, std::size_t clusters);
 
+// Spectral clustering (Ng, Jordan & Weiss): k-means on the leading eigenvectors
+// of the normalized affinity matrix D^(-1/2) W D^(-1/2).
+struct SpectralParams {
+    std::size_t clusters = 8;
+    bool nearest = false;  // affinity: false = RBF kernel exp(-gamma ||a - b||^2), true = k-nearest-neighbor graph
+    double gamma = 1.0;
+    std::size_t neighbors = 10;
+    std::size_t runs = 10;  // k-means restarts; the lowest inertia wins
+    bool has_seed = false;
+    std::uint64_t seed = 0;
+
+    void save(ArchiveWriter &w) const;
+    void load(ArchiveReader &r);
+};
+std::vector<int> spectral_clustering(const Matrix &X, const SpectralParams &p, unsigned threads);
+
 }  // namespace mlcore

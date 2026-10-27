@@ -263,6 +263,393 @@ void RandomProjector::load(ArchiveReader &r) {
     projection.load(r);
 }
 
+// ---- FastICA ------------------------------------------------------------------------------------
+
+FastICA::Contrast FastICA::parse(const std::string &name) {
+    if (name == "logcosh") return Contrast::LogCosh;
+    if (name == "exp") return Contrast::Exp;
+    if (name == "cube") return Contrast::Cube;
+    throw std::invalid_argument("Unknown contrast function \"" + name + "\" (expected logcosh, exp or cube)");
+}
+
+std::string FastICA::name(Contrast c) {
+    switch (c) {
+        case Contrast::LogCosh: return "logcosh";
+        case Contrast::Exp: return "exp";
+        case Contrast::Cube: return "cube";
+    }
+    return "logcosh";
+}
+
+namespace {
+
+// W <- (W W^T)^(-1/2) W: makes the rows of the k x k matrix W orthonormal.
+void decorrelate(Matrix &W) {
+    const std::size_t k = W.rows;
+    std::vector<double> S(k * k, 0.0);
+    for (std::size_t i = 0; i < k; ++i) {
+        for (std::size_t j = 0; j < k; ++j) {
+            S[i * k + j] = dot(W.row(i), W.row(j), k);
+        }
+    }
+    std::vector<double> values, vectors;
+    symmetric_eigen(S, k, values, vectors);
+    // M = E diag(1 / sqrt(s)) E^T
+    std::vector<double> M(k * k, 0.0);
+    for (std::size_t c = 0; c < k; ++c) {
+        const double scale = 1.0 / std::sqrt(std::max(values[c], 1e-300));
+        for (std::size_t i = 0; i < k; ++i) {
+            for (std::size_t j = 0; j < k; ++j) {
+                M[i * k + j] += vectors[i * k + c] * scale * vectors[j * k + c];
+            }
+        }
+    }
+    Matrix next(k, k);
+    for (std::size_t i = 0; i < k; ++i) {
+        for (std::size_t j = 0; j < k; ++j) {
+            double s = 0.0;
+            for (std::size_t m = 0; m < k; ++m) s += M[i * k + m] * W(m, j);
+            next(i, j) = s;
+        }
+    }
+    W = std::move(next);
+}
+
+}  // namespace
+
+void FastICA::fit(const Matrix &X, unsigned threads) {
+    require_training_set(X, X.rows);
+    const std::size_t n = X.rows, d = X.cols, k = dimensions == 0 ? d : dimensions;
+    check_dimensions(k, d, "the number of features");
+    if (n < 2) {
+        throw std::invalid_argument("FastICA needs at least 2 samples");
+    }
+    const std::vector<double> mean = column_means(X);
+    std::vector<double> values, vectors;
+    symmetric_eigen(covariance(X, mean), d, values, vectors);
+    std::size_t rank = 0;
+    for (double v : values) {
+        rank += v > 1e-10 * std::max(values[0], 0.0) && v > 0.0;
+    }
+    if (k > rank) {
+        throw std::invalid_argument("dimensions (" + std::to_string(k) + ") cannot exceed the rank of the data (" +
+                                    std::to_string(rank) + ")");
+    }
+
+    // Whitening: z = K (x - mean) with K = D^(-1/2) E^T over the top k components.
+    Matrix K(k, d);
+    for (std::size_t c = 0; c < k; ++c) {
+        for (std::size_t j = 0; j < d; ++j) K(c, j) = vectors[j * d + c] / std::sqrt(values[c]);
+    }
+    Matrix Z(n, k);
+    parallel_for(n, threads, [&](std::size_t i) {
+        for (std::size_t c = 0; c < k; ++c) {
+            double s = 0.0;
+            for (std::size_t j = 0; j < d; ++j) s += K(c, j) * (X(i, j) - mean[j]);
+            Z(i, c) = s;
+        }
+    });
+
+    Rng rng = make_rng(has_seed, seed);
+    std::normal_distribution<double> normal(0.0, 1.0);
+    Matrix W(k, k);
+    for (double &v : W.data) v = normal(rng);
+    decorrelate(W);
+
+    Matrix G(n, k), Gp(n, k);
+    long done = 0;
+    for (long it = 0; it < max_iterations; ++it) {
+        parallel_for(n, threads, [&](std::size_t i) {
+            for (std::size_t c = 0; c < k; ++c) {
+                const double u = dot(Z.row(i), W.row(c), k);
+                switch (contrast) {
+                    case Contrast::LogCosh: {
+                        const double t = std::tanh(u);
+                        G(i, c) = t;
+                        Gp(i, c) = 1.0 - t * t;
+                        break;
+                    }
+                    case Contrast::Exp: {
+                        const double e = std::exp(-0.5 * u * u);
+                        G(i, c) = u * e;
+                        Gp(i, c) = (1.0 - u * u) * e;
+                        break;
+                    }
+                    case Contrast::Cube:
+                        G(i, c) = u * u * u;
+                        Gp(i, c) = 3.0 * u * u;
+                        break;
+                }
+            }
+        });
+        // W+ = E[g(Wz) z^T] - diag(E[g'(Wz)]) W
+        Matrix next(k, k);
+        parallel_for(k, threads, [&](std::size_t c) {
+            double gp = 0.0;
+            for (std::size_t i = 0; i < n; ++i) {
+                gp += Gp(i, c);
+                const double g = G(i, c);
+                const double *z = Z.row(i);
+                for (std::size_t j = 0; j < k; ++j) next(c, j) += g * z[j];
+            }
+            gp /= static_cast<double>(n);
+            for (std::size_t j = 0; j < k; ++j) next(c, j) = next(c, j) / static_cast<double>(n) - gp * W(c, j);
+        });
+        decorrelate(next);
+        double change = 0.0;
+        for (std::size_t c = 0; c < k; ++c) {
+            change = std::max(change, std::fabs(std::fabs(dot(next.row(c), W.row(c), k)) - 1.0));
+        }
+        W = std::move(next);
+        done = it + 1;
+        if (change < tolerance) {
+            break;
+        }
+    }
+
+    // Unmixing U = W K (k x d) and mixing A = E D^(1/2) W^T (d x k).
+    Matrix U(k, d), A(d, k);
+    for (std::size_t c = 0; c < k; ++c) {
+        for (std::size_t j = 0; j < d; ++j) {
+            double u = 0.0, a = 0.0;
+            for (std::size_t m = 0; m < k; ++m) {
+                u += W(c, m) * K(m, j);
+                a += vectors[j * d + m] * std::sqrt(values[m]) * W(c, m);
+            }
+            U(c, j) = u;
+            A(j, c) = a;
+        }
+    }
+    // Deterministic signs: the largest mixing weight of each component is positive.
+    for (std::size_t c = 0; c < k; ++c) {
+        std::size_t big = 0;
+        for (std::size_t j = 1; j < d; ++j) {
+            if (std::fabs(A(j, c)) > std::fabs(A(big, c))) big = j;
+        }
+        if (A(big, c) < 0) {
+            for (std::size_t j = 0; j < d; ++j) {
+                A(j, c) = -A(j, c);
+                U(c, j) = -U(c, j);
+            }
+        }
+    }
+    projection.mean = mean;
+    projection.W = Matrix(d, k);
+    for (std::size_t j = 0; j < d; ++j) {
+        for (std::size_t c = 0; c < k; ++c) projection.W(j, c) = U(c, j);
+    }
+    mixing = std::move(A);
+    iterations = done;
+}
+
+void FastICA::save(ArchiveWriter &w) const {
+    w.size(dimensions);
+    w.u8(static_cast<std::uint8_t>(contrast));
+    w.i64(max_iterations);
+    w.f64(tolerance);
+    w.boolean(has_seed);
+    w.u64(seed);
+    projection.save(w);
+    w.matrix(mixing);
+    w.i64(iterations);
+}
+
+void FastICA::load(ArchiveReader &r) {
+    dimensions = r.size();
+    const std::uint8_t c = r.u8();
+    ArchiveReader::require(c <= static_cast<std::uint8_t>(Contrast::Cube), "bad contrast function");
+    contrast = static_cast<Contrast>(c);
+    max_iterations = static_cast<long>(r.i64());
+    tolerance = r.f64();
+    has_seed = r.boolean();
+    seed = r.u64();
+    projection.load(r);
+    mixing = r.matrix();
+    iterations = static_cast<long>(r.i64());
+    ArchiveReader::require(max_iterations >= 1, "bad FastICA parameters");
+    if (projection.W.rows > 0) {
+        ArchiveReader::require(mixing.rows == projection.W.rows && mixing.cols == projection.W.cols &&
+                               (dimensions == 0 || dimensions == projection.W.cols));
+    }
+}
+
+// ---- NMF --------------------------------------------------------------------------------------
+
+namespace {
+
+double nmf_error(const Matrix &X, const Matrix &W, const Matrix &H, unsigned threads) {
+    const std::size_t k = H.rows, d = H.cols;
+    std::vector<double> rows(X.rows, 0.0);
+    parallel_for(X.rows, threads, [&](std::size_t i) {
+        double s = 0.0;
+        for (std::size_t j = 0; j < d; ++j) {
+            double wh = 0.0;
+            for (std::size_t t = 0; t < k; ++t) wh += W(i, t) * H(t, j);
+            const double diff = X(i, j) - wh;
+            s += diff * diff;
+        }
+        rows[i] = s;
+    });
+    double total = 0.0;
+    for (double s : rows) total += s;
+    return std::sqrt(total);
+}
+
+Matrix gram_of(const Matrix &H) {
+    Matrix G(H.rows, H.rows);
+    for (std::size_t s = 0; s < H.rows; ++s) {
+        for (std::size_t t = 0; t < H.rows; ++t) G(s, t) = dot(H.row(s), H.row(t), H.cols);
+    }
+    return G;
+}
+
+void require_non_negative(const double *x, std::size_t d, const std::string &where) {
+    for (std::size_t j = 0; j < d; ++j) {
+        if (x[j] < 0.0) {
+            throw std::invalid_argument("NMF needs non-negative features; " + where + "feature #" + std::to_string(j) +
+                                        " is negative");
+        }
+    }
+}
+
+}  // namespace
+
+Matrix NMF::fit(const Matrix &X, unsigned threads) {
+    require_training_set(X, X.rows);
+    const std::size_t n = X.rows, d = X.cols, k = dimensions;
+    check_dimensions(k, d, "the number of features");
+    double total = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        require_non_negative(X.row(i), d, "sample #" + std::to_string(i) + ", ");
+        for (std::size_t j = 0; j < d; ++j) total += X(i, j);
+    }
+    if (!(total > 0.0)) {
+        throw std::invalid_argument("NMF needs at least one positive feature value");
+    }
+
+    // Random non-negative start scaled to the data, as scikit-learn's "random" init.
+    Rng rng = make_rng(has_seed, seed);
+    std::normal_distribution<double> normal(0.0, 1.0);
+    const double scale = std::sqrt(total / static_cast<double>(n * d) / static_cast<double>(k));
+    Matrix H(k, d), W(n, k);
+    for (double &v : H.data) v = scale * std::fabs(normal(rng));
+    for (double &v : W.data) v = scale * std::fabs(normal(rng));
+
+    const double initial = nmf_error(X, W, H, threads);
+    double previous = initial, current = initial;
+    long done = 0;
+    Matrix XHt(n, k), WtX(k, d);
+    for (long it = 0; it < max_iterations; ++it) {
+        // Hierarchical alternating least squares: one coordinate block at a time.
+        const Matrix HHt = gram_of(H);
+        parallel_for(n, threads, [&](std::size_t i) {
+            for (std::size_t t = 0; t < k; ++t) XHt(i, t) = dot(X.row(i), H.row(t), d);
+            for (std::size_t t = 0; t < k; ++t) {
+                if (HHt(t, t) <= 0.0) continue;
+                double num = XHt(i, t);
+                for (std::size_t s = 0; s < k; ++s) num -= W(i, s) * HHt(s, t);
+                W(i, t) = std::max(0.0, W(i, t) + num / HHt(t, t));
+            }
+        });
+        Matrix WtW(k, k);
+        for (std::size_t s = 0; s < k; ++s) {
+            for (std::size_t t = 0; t < k; ++t) {
+                double v = 0.0;
+                for (std::size_t i = 0; i < n; ++i) v += W(i, s) * W(i, t);
+                WtW(s, t) = v;
+            }
+        }
+        parallel_for(k, threads, [&](std::size_t t) {
+            double *row = WtX.row(t);
+            std::fill(row, row + d, 0.0);
+            for (std::size_t i = 0; i < n; ++i) {
+                const double w = W(i, t);
+                if (w == 0.0) continue;
+                const double *x = X.row(i);
+                for (std::size_t j = 0; j < d; ++j) row[j] += w * x[j];
+            }
+        });
+        parallel_for(d, threads, [&](std::size_t j) {
+            for (std::size_t t = 0; t < k; ++t) {
+                if (WtW(t, t) <= 0.0) continue;
+                double num = WtX(t, j);
+                for (std::size_t s = 0; s < k; ++s) num -= WtW(t, s) * H(s, j);
+                H(t, j) = std::max(0.0, H(t, j) + num / WtW(t, t));
+            }
+        });
+        done = it + 1;
+        if (done % 10 == 0 || done == max_iterations) {
+            current = nmf_error(X, W, H, threads);
+            if (initial > 0.0 && (previous - current) / initial < tolerance) {
+                break;
+            }
+            previous = current;
+        }
+    }
+    current = nmf_error(X, W, H, threads);
+    components = std::move(H);
+    gram = gram_of(components);
+    error = current;
+    iterations = done;
+    return W;
+}
+
+void NMF::transform(const double *x, double *out) const {
+    const std::size_t k = components.rows, d = components.cols;
+    require_non_negative(x, d, "");
+    std::vector<double> hx(k);
+    for (std::size_t t = 0; t < k; ++t) {
+        hx[t] = dot(components.row(t), x, d);
+        out[t] = gram(t, t) > 0.0 ? std::max(0.0, hx[t] / gram(t, t)) : 0.0;
+    }
+    // Coordinate descent on the non-negative least squares problem min ||x - H^T w||.
+    for (int it = 0; it < 500; ++it) {
+        double change = 0.0, largest = 0.0;
+        for (std::size_t t = 0; t < k; ++t) {
+            if (gram(t, t) <= 0.0) continue;
+            double num = hx[t];
+            for (std::size_t s = 0; s < k; ++s) num -= gram(t, s) * out[s];
+            const double next = std::max(0.0, out[t] + num / gram(t, t));
+            change = std::max(change, std::fabs(next - out[t]));
+            largest = std::max(largest, next);
+            out[t] = next;
+        }
+        if (change <= 1e-10 * std::max(largest, 1e-300)) {
+            break;
+        }
+    }
+}
+
+void NMF::save(ArchiveWriter &w) const {
+    w.size(dimensions);
+    w.i64(max_iterations);
+    w.f64(tolerance);
+    w.boolean(has_seed);
+    w.u64(seed);
+    w.matrix(components);
+    w.f64(error);
+    w.i64(iterations);
+}
+
+void NMF::load(ArchiveReader &r) {
+    dimensions = r.size();
+    max_iterations = static_cast<long>(r.i64());
+    tolerance = r.f64();
+    has_seed = r.boolean();
+    seed = r.u64();
+    components = r.matrix();
+    error = r.f64();
+    iterations = static_cast<long>(r.i64());
+    ArchiveReader::require(dimensions >= 1 && max_iterations >= 1, "bad NMF parameters");
+    if (fitted()) {
+        ArchiveReader::require(components.rows == dimensions && components.cols > 0);
+        for (double v : components.data) {
+            ArchiveReader::require(v >= 0.0 && std::isfinite(v), "NMF components must be non-negative");
+        }
+    }
+    gram = gram_of(components);
+}
+
 // ---- t-SNE ----------------------------------------------------------------------------------------
 
 void TSNEParams::save(ArchiveWriter &w) const {

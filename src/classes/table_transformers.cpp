@@ -814,8 +814,7 @@ void ZEND_FASTCALL missing_construct(INTERNAL_FUNCTION_PARAMETERS) {
         if (placeholder) {
             fresh.placeholder = zstr(placeholder);
         }
-        fresh.has_seed = !seed_null;
-        fresh.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.has_seed, fresh.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }
@@ -1003,8 +1002,7 @@ void ZEND_FASTCALL neighbor_imputer_construct(INTERNAL_FUNCTION_PARAMETERS) {
         if (placeholder) {
             fresh.placeholder = zstr(placeholder);
         }
-        fresh.has_seed = !seed_null;
-        fresh.seed = static_cast<std::uint64_t>(seed);
+        parse_seed(seed_null, seed, fresh.has_seed, fresh.seed);
         reset(ZEND_THIS, std::move(fresh));
     });
 }

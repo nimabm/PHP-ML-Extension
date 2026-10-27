@@ -8,17 +8,20 @@
 
 **Fast machine learning for PHP, written in C++ as a native Zend extension.**
 
-PHP-ML-Native (`mlnative`) gives PHP more than 100 machine learning classes:
+PHP-ML-Native (`mlnative`) gives PHP more than 120 machine learning classes:
 
 - classification, regression, clustering and anomaly detection
 - ensembles, pipelines and hyper-parameter search
-- preprocessing, dimensionality reduction and text processing
+- preprocessing and text processing
+- dimensionality reduction, from PCA to kernel PCA, ICA, NMF, Isomap and UMAP
 - neural networks
+- hidden Markov models
+- recommender systems
 - evaluation
 
 You train and use the models from ordinary PHP code, but the math runs as compiled C++ inside
 the PHP engine instead of in interpreted PHP loops. In the benchmark below that makes it
-**14× to 68× faster** than the same algorithms written in pure PHP, and it can use every CPU
+**14× to 62× faster** than the same algorithms written in pure PHP, and it can use every CPU
 core.
 
 ```php
@@ -32,15 +35,17 @@ $model->predict([5.1, 3.5, 1.4]);
 |---|---|
 | Classification | LogisticRegression, KNearestNeighbors, KDNeighbors, RadiusNeighbors, GaussianNB, NaiveBayes, MultinomialNB, ClassificationTree, ExtraTreeClassifier, RandomForest, AdaBoost, LogitBoost, SVC, MLPClassifier |
 | Regression | LinearRegression (ridge), ElasticNet, RegressionTree, ExtraTreeRegressor, RandomForestRegressor, GradientBoost, KNNRegressor, KDNeighborsRegressor, RadiusNeighborsRegressor, SVR, MLPRegressor, Adaline |
-| Clustering | KMeans (k-means++, k-MC², preset seeders), KMedoids, FuzzyCMeans, GaussianMixture, MeanShift, DBSCAN, OPTICS, Ward |
+| Clustering | KMeans (k-means++, k-MC², preset seeders), MiniBatchKMeans (with incremental `partialFit()`), KMedoids, FuzzyCMeans, GaussianMixture, MeanShift, DBSCAN, OPTICS, Ward, SpectralClustering |
 | Anomaly detection | RobustZScore, GaussianMLE, IsolationForest, LocalOutlierFactor, Loda, OneClassSVM |
 | Meta estimators | OneVsRest, BootstrapAggregator, CommitteeMachine, Pipeline, GridSearch, BayesianSearch |
 | Preprocessing | StandardScaler, MinMaxNormalizer, MaxAbsoluteScaler, RobustStandardizer, PowerTransformer, L1/L2Normalizer, PolynomialExpander, OneHotEncoder, IntervalDiscretizer, NumericStringConverter, BooleanConverter, MissingDataImputer, KNNImputer, HotDeckImputer, LambdaFunction |
-| Dimensionality reduction | PCA, TruncatedSVD, LinearDiscriminantAnalysis, Gaussian/SparseRandomProjector, t-SNE |
+| Dimensionality reduction | PCA, KernelPCA, TruncatedSVD, LinearDiscriminantAnalysis, FastICA, NMF, Gaussian/SparseRandomProjector, Isomap, UMAP, t-SNE |
 | Text | Word/Whitespace/Sentence/N-gram/K-skip-n-gram tokenizers, Porter stemmer, TextNormalizer, RegexFilter, StopWordFilter, WordCountVectorizer, TokenHashingVectorizer, TF-IDF, BM25 |
 | Neural networks | Dense, Activation (12 functions), Dropout, BatchNorm, PReLU, Swish, Noise; SGD, Momentum, AdaGrad, RMSProp, Adam, AdaMax; learning-rate schedules |
-| Evaluation | 24 metrics, confusion matrix and other reports, HoldOut / KFold / LeavePOut / MonteCarlo validators |
-| Utilities | Dataset generators, train/test split, 11 distance metrics + Gower |
+| Sequence models | HiddenMarkovModel (discrete symbols), GaussianHMM: Baum–Welch, supervised training, Viterbi, posteriors, sampling |
+| Recommender systems | MatrixFactorization (ALS), ImplicitALS (implicit feedback), KNNRecommender (item/user-based): `recommend()`, `similarItems()`, cold start |
+| Evaluation | 27 metrics (including precision/recall/NDCG at k), confusion matrix and other reports, HoldOut / KFold / LeavePOut / MonteCarlo validators |
+| Utilities | Dataset generators (including synthetic ratings), train/test split, 11 distance metrics + Gower |
 
 All models share the same behaviour:
 
@@ -62,16 +67,19 @@ It ran on PHP 8.3, in Docker on aarch64 with 4 CPUs, using the default `-O2` bui
 
 | Benchmark | Pure PHP | mlnative | Speedup |
 |---|---:|---:|---:|
-| KNN: fit 3000×16 + predict 300 | 280.8 ms | 6.6 ms | **43×** |
-| LogisticRegression: 200 epochs on 3000×16 | 228.6 ms | 16.9 ms | **14×** |
-| LinearRegression: fit 20000×32 | 383.3 ms | 5.6 ms | **68×** |
-| KMeans: 5000×8, 4 clusters, 20 iterations | 63.3 ms | 4.0 ms | **16×** |
+| KNN: fit 3000×16 + predict 300 | 286.4 ms | 7.1 ms | **41×** |
+| LogisticRegression: 200 epochs on 3000×16 | 223.8 ms | 16.5 ms | **14×** |
+| LinearRegression: fit 20000×32 | 366.5 ms | 5.9 ms | **62×** |
+| KMeans: 5000×8, 4 clusters, 20 iterations | 63.6 ms | 4.0 ms | **16×** |
 
 | Multithreading (`mlnative.threads`) | 1 thread | 4 threads | Speedup |
 |---|---:|---:|---:|
-| RandomForest: 200 trees on 3000×16 | 833.2 ms | 222.4 ms | **3.7×** |
-| KNN: predict 3000 samples | 63.1 ms | 20.1 ms | **3.1×** |
-| IsolationForest: 300 trees on 3000×16 | 70.9 ms | 20.0 ms | **3.5×** |
+| RandomForest: 200 trees on 3000×16 | 821.0 ms | 223.3 ms | **3.7×** |
+| KNN: predict 3000 samples | 63.5 ms | 18.0 ms | **3.5×** |
+| IsolationForest: 300 trees on 3000×16 | 71.0 ms | 20.9 ms | **3.4×** |
+| KMeans: 50000×8, 8 clusters | 279.2 ms | 93.9 ms | **3.0×** |
+| SpectralClustering: 1500 samples | 2130.0 ms | 733.5 ms | **2.9×** |
+| MatrixFactorization: 80k ratings, 20 factors | 511.9 ms | 160.8 ms | **3.2×** |
 
 To reproduce it, run:
 
@@ -79,7 +87,7 @@ To reproduce it, run:
 docker run --rm mlnative php benchmarks/benchmark.php
 ```
 
-The methodology and notes are in [the documentation](docs/DOCUMENTATION.md#19-benchmarks).
+The methodology and notes are in [the documentation](docs/DOCUMENTATION.md#21-benchmarks).
 For a comparison with Python, JavaScript, Ruby and Lua, and with NumPy, scikit-learn and
 PyTorch, see the [cross-language benchmark report](docs/BENCHMARK_REPORT.md).
 
@@ -223,6 +231,53 @@ $detector = (new IsolationForest(seed: 1))->fit($normal);
 print_r($detector->predict([[0.2, -0.4], [7, 7]]));   // [0, 1]  (1 = anomaly)
 ```
 
+### Recommendations
+
+```php
+<?php
+use ML\Recommender\MatrixFactorization;
+
+$ratings = [
+    ['ann', 'Alien', 5], ['ann', 'Aliens', 5], ['ann', 'Notting Hill', 1],
+    ['ben', 'Alien', 4], ['ben', 'Aliens', 5], ['ben', 'Predator', 5], ['ben', 'Notting Hill', 2],
+    ['cid', 'Notting Hill', 5], ['cid', 'Love Actually', 5], ['cid', 'Alien', 1],
+    ['dee', 'Love Actually', 4], ['dee', 'Notting Hill', 4], ['dee', 'Predator', 1],
+];
+$model = (new MatrixFactorization(factors: 2, seed: 1))->fit($ratings);
+print_r(array_keys($model->recommend('ann', 2)));     // [Predator, Love Actually]: unseen films, best first
+printf("%.1f\n", $model->predict(['dee', 'Alien']));  // 1.4: dee prefers romance
+```
+
+### Visualizing high-dimensional data with UMAP
+
+```php
+<?php
+use ML\Preprocessing\UMAP;
+use ML\Datasets;
+
+$data = Datasets::agglomerate([
+    'a' => Datasets::blob([0, 0, 0, 0, 0], 1.0, 50, 1),
+    'b' => Datasets::blob([6, 6, 0, 0, 0], 1.0, 50, 2),
+], true, 1);
+$umap = new UMAP(dimensions: 2, neighbors: 10, seed: 1);
+$xy = $umap->fitTransform($data['samples']);           // one [x, y] point per sample, ready to plot
+$new = $umap->transform([[6, 5.5, 0, 0, 0]]);          // new samples go into the same map
+echo count($xy), ' points, ', count($new[0]), " coordinates each\n";   // 100 points, 2 coordinates each
+```
+
+### Hidden Markov model
+
+```php
+<?php
+use ML\Sequence\HiddenMarkovModel;
+
+$activities = [['walk', 'walk', 'shop', 'clean', 'clean', 'walk'], ['shop', 'clean', 'clean', 'clean', 'walk', 'walk']];
+$weather = [['sunny', 'sunny', 'sunny', 'rainy', 'rainy', 'sunny'], ['sunny', 'rainy', 'rainy', 'rainy', 'sunny', 'sunny']];
+
+$hmm = (new HiddenMarkovModel())->fitLabeled($activities, $weather);
+echo implode(' ', $hmm->predict(['walk', 'clean', 'clean', 'walk'])), "\n";   // sunny rainy rainy sunny
+```
+
 ### Hyper-parameter search
 
 ```php
@@ -293,14 +348,15 @@ try {
 
 - installation
 - PHP version compatibility
-- every class and parameter (100+ classes), each with a runnable example
+- every class and parameter (120+ classes), each with a runnable example
 - model persistence
-- recipes (evaluation reports, model comparison, text classification, fraud detection, tuning, CSV loading)
+- recipes (evaluation reports, model comparison, text classification, fraud detection, tuning, CSV loading, a product recommender)
 - benchmarks
 - testing
 - the extension's architecture and how to add a new model
 
 For IDE autocompletion, point your IDE at [stubs/mlnative.stub.php](stubs/mlnative.stub.php).
+A test checks that the stub matches the extension exactly.
 
 ## Project layout
 
@@ -332,7 +388,7 @@ release:
 2. Add a changelog entry for that version.
 3. Merge into `main`.
 
-The [release process](docs/DOCUMENTATION.md#201-continuous-integration-and-releases) is
+The [release process](docs/DOCUMENTATION.md#221-continuous-integration-and-releases) is
 described in the documentation.
 
 ## License

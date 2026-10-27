@@ -16,7 +16,7 @@ notes="$(awk -v heading="### $version" '
 ' "$doc")"
 
 if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
-    echo "No changelog entry \"### $version\" in docs/DOCUMENTATION.md (section 13)" >&2
+    echo "No changelog entry \"### $version\" in docs/DOCUMENTATION.md (section 26)" >&2
     exit 1
 fi
 printf '%s\n' "$notes"

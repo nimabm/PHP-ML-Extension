@@ -22,6 +22,7 @@ RUN phpize \
 FROM build AS test
 COPY tests ./tests
 COPY docs ./docs
+COPY stubs ./stubs
 COPY README.md ./
 ENV NO_INTERACTION=1 REPORT_EXIT_STATUS=1
 RUN make test TESTS="--show-diff tests"

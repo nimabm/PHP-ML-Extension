@@ -17,7 +17,7 @@ Update both files:
 - [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md): the full documentation.
 - [README.md](README.md): the summary on the repository front page.
 
-Follow the checklist in [docs/DOCUMENTATION.md section 10.3](docs/DOCUMENTATION.md#103-adding-a-new-model-checklist).
+Follow the checklist in [docs/DOCUMENTATION.md section 23.3](docs/DOCUMENTATION.md#233-adding-a-new-model-checklist).
 At minimum, touch these parts of DOCUMENTATION.md:
 
 - the overview table
@@ -48,11 +48,11 @@ Releases are published automatically by
 [.github/workflows/ci.yml](.github/workflows/ci.yml). Don't create tags or releases by hand.
 
 1. Bump `PHP_MLNATIVE_VERSION` in `php_mlnative.h`, following [semver](https://semver.org).
-2. Add a `### <version>` entry at the top of the changelog (section 13 of
+2. Add a `### <version>` entry at the top of the changelog (section 26 of
    `docs/DOCUMENTATION.md`). CI fails if the entry is missing.
 3. Merge into `main`. CI tests all PHP versions and architectures, then publishes the release
    `v<version>` with prebuilt binaries.
 
 A merge without a version bump is tested, but nothing is released. See
-[docs/DOCUMENTATION.md section 9.1](docs/DOCUMENTATION.md#91-continuous-integration-and-releases)
+[docs/DOCUMENTATION.md section 22.1](docs/DOCUMENTATION.md#221-continuous-integration-and-releases)
 for details.

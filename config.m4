@@ -31,6 +31,9 @@ if test "$PHP_MLNATIVE" != "no"; then
     src/classes/text.cpp
     src/classes/svm.cpp
     src/classes/neuralnet.cpp
+    src/classes/manifold.cpp
+    src/classes/hmm.cpp
+    src/classes/recommender.cpp
     src/core/distance.cpp
     src/core/linalg.cpp
     src/core/linear_regression.cpp
@@ -50,6 +53,9 @@ if test "$PHP_MLNATIVE" != "no"; then
     src/core/text.cpp
     src/core/svm.cpp
     src/core/neuralnet.cpp
+    src/core/manifold.cpp
+    src/core/hmm.cpp
+    src/core/recommender.cpp
   "
 
   PHP_NEW_EXTENSION(mlnative, $MLNATIVE_SOURCES, $ext_shared,, [-std=c++17 -pthread -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1], cxx)

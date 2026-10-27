@@ -43,6 +43,11 @@ PHP_MINIT_FUNCTION(mlnative) {
     mlphp::register_decomposition();
     mlphp::register_svm();
     mlphp::register_neuralnet();
+
+    // 0.1.3
+    mlphp::register_manifold();
+    mlphp::register_sequence();
+    mlphp::register_recommender();
     return SUCCESS;
 }
 
@@ -64,9 +69,15 @@ PHP_MINFO_FUNCTION(mlnative) {
                              "RandomForestRegressor, GradientBoost, KNNRegressor, KDNeighborsRegressor, "
                              "RadiusNeighborsRegressor, Adaline, SVR, MLPRegressor");
     php_info_print_table_row(2, "Clustering",
-                             "KMeans, KMedoids, FuzzyCMeans, GaussianMixture, MeanShift, DBSCAN, OPTICS, Ward");
+                             "KMeans, MiniBatchKMeans, KMedoids, FuzzyCMeans, GaussianMixture, MeanShift, DBSCAN, "
+                             "OPTICS, Ward, SpectralClustering");
     php_info_print_table_row(2, "Anomaly detection",
                              "RobustZScore, GaussianMLE, IsolationForest, LocalOutlierFactor, Loda, OneClassSVM");
+    php_info_print_table_row(2, "Dimensionality reduction",
+                             "PCA, KernelPCA, TruncatedSVD, LinearDiscriminantAnalysis, FastICA, NMF, Isomap, UMAP, "
+                             "TSNE, GaussianRandomProjector, SparseRandomProjector");
+    php_info_print_table_row(2, "Sequences", "HiddenMarkovModel, GaussianHMM");
+    php_info_print_table_row(2, "Recommenders", "MatrixFactorization, ImplicitALS, KNNRecommender");
     php_info_print_table_end();
     DISPLAY_INI_ENTRIES();
 }

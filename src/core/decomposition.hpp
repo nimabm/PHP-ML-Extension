@@ -68,6 +68,51 @@ struct RandomProjector {
     void load(ArchiveReader &r);
 };
 
+// Independent component analysis (symmetric FastICA on whitened data).
+struct FastICA {
+    enum class Contrast : std::uint8_t { LogCosh, Exp, Cube };
+
+    std::size_t dimensions = 0;  // 0 = as many components as features
+    Contrast contrast = Contrast::LogCosh;
+    long max_iterations = 200;
+    double tolerance = 1e-4;
+    bool has_seed = false;
+    std::uint64_t seed = 0;
+
+    LinearProjection projection;  // mean and unmixing matrix (d x k)
+    Matrix mixing;                // d x k: x ~ mean + mixing s
+    long iterations = 0;
+
+    void fit(const Matrix &X, unsigned threads);
+    static Contrast parse(const std::string &name);
+    static std::string name(Contrast c);
+    void save(ArchiveWriter &w) const;
+    void load(ArchiveReader &r);
+};
+
+// Non-negative matrix factorization X ~ W H (Frobenius loss, HALS updates).
+struct NMF {
+    std::size_t dimensions = 2;
+    long max_iterations = 200;
+    double tolerance = 1e-4;
+    bool has_seed = false;
+    std::uint64_t seed = 0;
+
+    Matrix components;   // H: k x d
+    Matrix gram;         // H H^T, cached for transform
+    double error = 0.0;  // Frobenius norm of X - W H after fit
+    long iterations = 0;
+
+    // Fits H and returns the training coefficients W (n x k).
+    Matrix fit(const Matrix &X, unsigned threads);
+    // Non-negative coefficients of one sample with H fixed.
+    void transform(const double *x, double *out) const;
+    bool fitted() const { return components.rows > 0; }
+    std::size_t features() const { return components.cols; }
+    void save(ArchiveWriter &w) const;
+    void load(ArchiveReader &r);
+};
+
 struct TSNEParams {
     std::size_t dimensions = 2;
     double rate = 100.0;

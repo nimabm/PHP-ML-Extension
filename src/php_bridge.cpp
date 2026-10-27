@@ -28,7 +28,14 @@ std::string feature_count_error(const std::string &subject, std::size_t got, std
     return subject + " has " + std::to_string(got) + " features, expected " + std::to_string(expected);
 }
 
-void read_features(HashTable *ht, const std::string &subject, double *out) {
+constexpr std::size_t kSingleSample = static_cast<std::size_t>(-1);
+
+// "Sample #i" (or "Sample" for a single sample); only built for error messages.
+std::string sample_name(std::size_t index) {
+    return index == kSingleSample ? std::string("Sample") : "Sample #" + std::to_string(index);
+}
+
+void read_features(HashTable *ht, std::size_t sample, double *out) {
     std::size_t j = 0;
     zval *value;
     ZEND_HASH_FOREACH_VAL(ht, value) {
@@ -41,15 +48,15 @@ void read_features(HashTable *ht, const std::string &subject, double *out) {
                 out[j] = Z_DVAL_P(value);
                 break;
             default:
-                throw std::invalid_argument(subject + ", feature #" + std::to_string(j) + " must be int or float, " +
-                                            type_name(value) + " given");
+                throw std::invalid_argument(sample_name(sample) + ", feature #" + std::to_string(j) +
+                                            " must be int or float, " + type_name(value) + " given");
         }
         ++j;
     }
     ZEND_HASH_FOREACH_END();
 }
 
-Label label_from(zval *value, std::size_t index) {
+Label label_from(zval *value, std::size_t index, const char *what = "Label") {
     ZVAL_DEREF(value);
     switch (Z_TYPE_P(value)) {
         case IS_LONG:
@@ -57,7 +64,7 @@ Label label_from(zval *value, std::size_t index) {
         case IS_STRING:
             return Label(std::in_place_index<1>, std::string(Z_STRVAL_P(value), Z_STRLEN_P(value)));
         default:
-            throw std::invalid_argument("Label #" + std::to_string(index) + " must be int or string, " +
+            throw std::invalid_argument(std::string(what) + " #" + std::to_string(index) + " must be int or string, " +
                                         type_name(value) + " given");
     }
 }
@@ -102,24 +109,23 @@ mlcore::Matrix read_samples(HashTable *ht, std::size_t expected_features) {
     zval *row;
     ZEND_HASH_FOREACH_VAL(ht, row) {
         ZVAL_DEREF(row);
-        const std::string subject = "Sample #" + std::to_string(r);
         if (Z_TYPE_P(row) != IS_ARRAY) {
-            throw std::invalid_argument(subject + " must be an array of numbers, " + type_name(row) + " given");
+            throw std::invalid_argument(sample_name(r) + " must be an array of numbers, " + type_name(row) + " given");
         }
         HashTable *features = Z_ARRVAL_P(row);
         const std::size_t d = zend_hash_num_elements(features);
         if (r == 0) {
             if (d == 0) {
-                throw std::invalid_argument(subject + " has no features");
+                throw std::invalid_argument(sample_name(r) + " has no features");
             }
             if (expected_features != 0 && d != expected_features) {
-                throw std::invalid_argument(feature_count_error(subject, d, expected_features));
+                throw std::invalid_argument(feature_count_error(sample_name(r), d, expected_features));
             }
             X = mlcore::Matrix(n, d);
         } else if (d != X.cols) {
-            throw std::invalid_argument(feature_count_error(subject, d, X.cols));
+            throw std::invalid_argument(feature_count_error(sample_name(r), d, X.cols));
         }
-        read_features(features, subject, X.row(r));
+        read_features(features, r, X.row(r));
         ++r;
     }
     ZEND_HASH_FOREACH_END();
@@ -135,7 +141,7 @@ std::vector<double> read_sample(HashTable *ht, std::size_t expected_features) {
         throw std::invalid_argument(feature_count_error("Sample", d, expected_features));
     }
     std::vector<double> x(d);
-    read_features(ht, "Sample", x.data());
+    read_features(ht, kSingleSample, x.data());
     return x;
 }
 
@@ -216,15 +222,7 @@ std::vector<int> LabelEncoder::fit(HashTable *ht) {
     return encoded;
 }
 
-void LabelEncoder::write(int index, zval *out) const {
-    const Label &label = classes[static_cast<std::size_t>(index)];
-    if (const zend_long *l = std::get_if<zend_long>(&label)) {
-        ZVAL_LONG(out, *l);
-    } else {
-        const std::string &s = std::get<std::string>(label);
-        ZVAL_STRINGL(out, s.data(), s.size());
-    }
-}
+void LabelEncoder::write(int index, zval *out) const { write_label(classes[static_cast<std::size_t>(index)], out); }
 
 void LabelEncoder::write_keyed(zval *out, int index, double value) const {
     const Label &label = classes[static_cast<std::size_t>(index)];
@@ -319,7 +317,9 @@ zend_class_entry *ce_probabilistic = nullptr;
 zend_class_entry *ce_transformer = nullptr;
 zend_class_entry *ce_stateful = nullptr;
 zend_class_entry *ce_ranks_features = nullptr;
+zend_class_entry *ce_online = nullptr;
 zend_class_entry *ce_tokenizer = nullptr;
+zend_class_entry *ce_recommender = nullptr;
 
 namespace {
 zend_class_entry *register_interface(const char *name, std::initializer_list<zend_class_entry *> parents = {}) {
@@ -344,7 +344,9 @@ void register_interfaces() {
     ce_transformer = register_interface("ML\\Transformer");
     ce_stateful = register_interface("ML\\Stateful");
     ce_ranks_features = register_interface("ML\\RanksFeatures");
+    ce_online = register_interface("ML\\Online");
     ce_tokenizer = register_interface("ML\\Text\\Tokenizer");
+    ce_recommender = register_interface("ML\\Recommender\\Recommender");
 }
 
 zend_class_entry *register_plain_class(const char *name, const zend_function_entry *methods,
@@ -378,15 +380,7 @@ std::vector<Label> read_labels(HashTable *ht, const char *what) {
     out.reserve(zend_hash_num_elements(ht));
     zval *value;
     ZEND_HASH_FOREACH_VAL(ht, value) {
-        ZVAL_DEREF(value);
-        if (Z_TYPE_P(value) == IS_LONG) {
-            out.emplace_back(std::in_place_index<0>, Z_LVAL_P(value));
-        } else if (Z_TYPE_P(value) == IS_STRING) {
-            out.emplace_back(std::in_place_index<1>, std::string(Z_STRVAL_P(value), Z_STRLEN_P(value)));
-        } else {
-            throw std::invalid_argument(std::string(what) + " #" + std::to_string(out.size()) +
-                                        " must be int or string, " + type_name(value) + " given");
-        }
+        out.push_back(label_from(value, out.size(), what));
     }
     ZEND_HASH_FOREACH_END();
     return out;
@@ -531,22 +525,21 @@ Table read_table(HashTable *ht, bool single, std::size_t expected_cols, const st
     zval *row;
     ZEND_HASH_FOREACH_VAL(ht, row) {
         ZVAL_DEREF(row);
-        const std::string subject = "Sample #" + std::to_string(r);
         if (Z_TYPE_P(row) != IS_ARRAY) {
-            throw std::invalid_argument(subject + " must be an array, " + type_name(row) + " given");
+            throw std::invalid_argument(sample_name(r) + " must be an array, " + type_name(row) + " given");
         }
         const std::size_t d = zend_hash_num_elements(Z_ARRVAL_P(row));
         if (r == 0) {
             if (d == 0) {
-                throw std::invalid_argument(subject + " has no features");
+                throw std::invalid_argument(sample_name(r) + " has no features");
             }
             if (expected_cols != 0 && d != expected_cols) {
-                throw std::invalid_argument(feature_count_error(subject, d, expected_cols));
+                throw std::invalid_argument(feature_count_error(sample_name(r), d, expected_cols));
             }
             t.cols = d;
             t.cells.resize(t.rows * t.cols);
         } else if (d != t.cols) {
-            throw std::invalid_argument(feature_count_error(subject, d, t.cols));
+            throw std::invalid_argument(feature_count_error(sample_name(r), d, t.cols));
         }
         read_row(Z_ARRVAL_P(row), t, r, placeholder);
         ++r;

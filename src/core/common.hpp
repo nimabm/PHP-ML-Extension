@@ -30,8 +30,10 @@ inline Rng make_rng(bool has_seed, std::uint64_t seed) {
     return Rng((static_cast<std::uint64_t>(device()) << 32) ^ device());
 }
 
-// Runs fn(i) for i in [0, n) on up to `threads` threads (1 = inline). The first
-// exception thrown by any task is rethrown in the caller after all threads join.
+// Runs fn(i) for i in [0, n) on up to `threads` threads (1 = inline). Indices are
+// handed out in chunks (about 16 per worker) so that cheap tasks don't contend on
+// the shared counter. The first exception thrown by any task is rethrown in the
+// caller after all threads join.
 template <typename F>
 void parallel_for(std::size_t n, unsigned threads, F &&fn) {
     if (threads <= 1 || n <= 1) {
@@ -41,13 +43,17 @@ void parallel_for(std::size_t n, unsigned threads, F &&fn) {
         return;
     }
     const unsigned workers = static_cast<unsigned>(std::min<std::size_t>(threads, n));
+    const std::size_t chunk = std::max<std::size_t>(1, n / (static_cast<std::size_t>(workers) * 16));
     std::atomic<std::size_t> next{0};
     std::exception_ptr error;
     std::mutex error_mutex;
     auto worker = [&] {
-        for (std::size_t i = next++; i < n; i = next++) {
+        for (std::size_t start = next.fetch_add(chunk); start < n; start = next.fetch_add(chunk)) {
+            const std::size_t end = std::min(n, start + chunk);
             try {
-                fn(i);
+                for (std::size_t i = start; i < end; ++i) {
+                    fn(i);
+                }
             } catch (...) {
                 std::lock_guard<std::mutex> lock(error_mutex);
                 if (!error) {

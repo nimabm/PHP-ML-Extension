@@ -189,6 +189,59 @@ void ZEND_FASTCALL datasets_swiss_roll(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_ratings, 0, 0, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, users, IS_LONG, 0, "100")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, items, IS_LONG, 0, "50")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, density, IS_DOUBLE, 0, "0.2")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, factors, IS_LONG, 0, "2")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, noise, IS_DOUBLE, 0, "0.5")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, seed, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+// [user, item, rating] triples (1-5 stars) from random user and item taste vectors.
+void ZEND_FASTCALL datasets_ratings(INTERNAL_FUNCTION_PARAMETERS) {
+    zend_long users = 100, items = 50, factors = 2, seed = 0;
+    double density = 0.2, noise = 0.5;
+    bool seed_null = true;
+    ZEND_PARSE_PARAMETERS_START(0, 6)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(users)
+        Z_PARAM_LONG(items)
+        Z_PARAM_DOUBLE(density)
+        Z_PARAM_LONG(factors)
+        Z_PARAM_DOUBLE(noise)
+        Z_PARAM_LONG_OR_NULL(seed, seed_null)
+    ZEND_PARSE_PARAMETERS_END();
+    guard([&] {
+        const std::size_t U = positive(users, "users"), I = positive(items, "items"), k = positive(factors, "factors");
+        check(density > 0.0 && density <= 1.0, "density must be between 0 (exclusive) and 1");
+        non_negative(noise, "noise");
+        check(U * I <= 100000000, "users * items must not exceed 100000000");
+        mlcore::Rng rng = rng_for(seed_null, seed);
+        std::normal_distribution<double> normal(0.0, 1.0);
+        std::uniform_real_distribution<double> unit(0.0, 1.0);
+        mlcore::Matrix P(U, k), Q(I, k);
+        for (double &v : P.data) v = normal(rng);
+        for (double &v : Q.data) v = normal(rng);
+        std::vector<double> bias(I);
+        for (double &v : bias) v = 0.5 * normal(rng);
+        array_init(return_value);
+        const double scale = 1.2 / std::sqrt(static_cast<double>(k));
+        for (std::size_t u = 0; u < U; ++u) {
+            for (std::size_t i = 0; i < I; ++i) {
+                if (unit(rng) >= density) continue;
+                const double r = 3.0 + bias[i] + scale * mlcore::dot(P.row(u), Q.row(i), k) + noise * normal(rng);
+                zval row;
+                array_init_size(&row, 3);
+                add_next_index_long(&row, static_cast<zend_long>(u));
+                add_next_index_long(&row, static_cast<zend_long>(i));
+                add_next_index_long(&row, static_cast<zend_long>(std::min(5.0, std::max(1.0, std::round(r)))));
+                add_next_index_zval(return_value, &row);
+            }
+        }
+    });
+}
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_hyperplane, 0, 1, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, coefficients, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, intercept, IS_DOUBLE, 0, "0.0")
@@ -359,7 +412,6 @@ void ZEND_FASTCALL datasets_split(INTERNAL_FUNCTION_PARAMETERS) {
     });
 }
 
-#define ML_STATIC(name, handler, arginfo) ZEND_FENTRY(name, (handler), arginfo, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
 
 const zend_function_entry dataset_methods[] = {
     ML_STATIC(blob, datasets_blob, arginfo_blob)
@@ -367,6 +419,7 @@ const zend_function_entry dataset_methods[] = {
     ML_STATIC(halfMoon, datasets_half_moon, arginfo_half_moon)
     ML_STATIC(swissRoll, datasets_swiss_roll, arginfo_swiss_roll)
     ML_STATIC(hyperplane, datasets_hyperplane, arginfo_hyperplane)
+    ML_STATIC(ratings, datasets_ratings, arginfo_ratings)
     ML_STATIC(agglomerate, datasets_agglomerate, arginfo_agglomerate)
     ML_STATIC(trainTestSplit, datasets_split, arginfo_split)
     PHP_FE_END};
